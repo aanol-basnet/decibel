@@ -1,3 +1,5 @@
+from mutagen.id3 import ID3, TIT2, TPE1, TALB, TRCK
+from mutagen.mp3 import MP3
 import os
 import re
 import threading
@@ -107,6 +109,27 @@ def clean_title(title):
     title = re.sub(r"\s*\(Audio\)\s*$", "", title, flags=re.IGNORECASE)
     return title.strip()
 
+def write_metadata(filepath, title=None, artist=None, album=None, track_number=None):
+    """Write metadata directly into MP3 using mutagen."""
+    try:
+        audio = ID3(filepath)
+    except Exception:
+        try:
+            audio = MP3(filepath)
+            audio.add_tags()
+            audio = ID3(filepath)
+        except Exception:
+            return
+    if title:
+        audio["TIT2"] = TIT2(encoding=3, text=title)
+    if artist:
+        audio["TPE1"] = TPE1(encoding=3, text=artist)
+    if album:
+        audio["TALB"] = TALB(encoding=3, text=album)
+    if track_number:
+        audio["TRCK"] = TRCK(encoding=3, text=str(track_number))
+    audio.save()
+
 
 def run_download(video_id, key, title, track_number, thumbnail_url, album, artist):
     url = f"https://music.youtube.com/watch?v={video_id}"
@@ -149,15 +172,12 @@ def run_download(video_id, key, title, track_number, thumbnail_url, album, artis
         cmd += ["--embed-thumbnail"]
 
     # Inject metadata via ffmpeg postprocessor
-    meta_args = []
     if track_number:
-        meta_args += ["-metadata", f"track={track_number}"]
+        cmd += ["--ppa", f"FFmpegMetadata+ffmpeg_o:-metadata track={track_number}"]
     if album:
-        meta_args += ["-metadata", f"album={album}"]
+        cmd += ["--ppa", f"FFmpegMetadata+ffmpeg_o:-metadata album={album}"]
     if artist:
-        meta_args += ["-metadata", f"artist={artist}"]
-    if meta_args:
-        cmd += ["--ppa", "FFmpegMetadata+ffmpeg_o:" + " ".join(meta_args)]
+        cmd += ["--ppa", f"FFmpegMetadata+ffmpeg_o:-metadata artist={artist}"]
 
     try:
         with open(log_path, "w") as log:
@@ -199,6 +219,10 @@ def run_download(video_id, key, title, track_number, thumbnail_url, album, artis
             os.remove(thumb_file)
 
         if process.returncode == 0:
+            # Write metadata with mutagen for reliability
+            mp3_path = os.path.join(out_folder, final_title + ".mp3")
+            if os.path.exists(mp3_path):
+                write_metadata(mp3_path, title=final_title, artist=artist, album=album, track_number=track_number)
             progress_data[key] = {
                 "status":  "done",
                 "percent": 100,
