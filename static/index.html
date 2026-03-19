@@ -764,15 +764,18 @@
         const songs = currentAlbumTracks.map(t => ({
           videoId: t.videoId, title: t.title,
           artist: d.artist, duration: t.duration, thumbnail: d.thumbnail,
+          trackNumber: t.trackNumber, album: d.title,
         }));
         renderSongs(songs, 'album-tracks', true);
+
+        document.getElementById('dl-all-btn').onclick = () => {
+          currentAlbumTracks.forEach(t => {
+            if (t.videoId) queueDownload(t.videoId, t.title, d.thumbnail, t.trackNumber, d.title, d.artist);
+          });
+          showToast(`Queued ${currentAlbumTracks.length} tracks`);
+        };
       })
       .catch(() => showToast('Failed to load album'));
-
-    document.getElementById('dl-all-btn').onclick = () => {
-      currentAlbumTracks.forEach(t => { if (t.videoId) queueDownload(t.videoId, t.title, ''); });
-      showToast(`Queued ${currentAlbumTracks.length} tracks`);
-    };
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -790,7 +793,7 @@
         </div>
         <span class="song-dur">${s.duration || ''}</span>
         ${s.videoId
-          ? `<button class="dl-btn" id="btn-${s.videoId}" onclick="queueDownload('${s.videoId}','${esc(s.title)}','${esc(s.thumbnail||'')}')">Get</button>`
+          ? `<button class="dl-btn" id="btn-${s.videoId}" onclick="queueDownload('${s.videoId}','${esc(s.title)}','${esc(s.thumbnail||'')}',${s.trackNumber||'null'},'${esc(s.album||'')}','${esc(s.artist||'')}')">Get</button>`
           : `<button class="dl-btn" disabled style="opacity:0.2">N/A</button>`}
       </div>
     `).join('');
@@ -821,27 +824,27 @@
   }
 
   // ── Download queue ─────────────────────────────────────────────────────────
-  function queueDownload(videoId, title, thumbnail) {
+  function queueDownload(videoId, title, thumbnail, trackNumber, album, artist) {
     const btn = document.getElementById('btn-' + videoId);
     if (btn) { btn.textContent = 'Queued'; btn.classList.add('queued'); }
-    downloadQueue.push({ videoId, title, thumbnail });
+    downloadQueue.push({ videoId, title, thumbnail, trackNumber, album: album||'', artist: artist||'' });
     if (!isDownloading) processQueue();
   }
 
   function processQueue() {
     if (!downloadQueue.length) { isDownloading = false; return; }
     isDownloading = true;
-    const { videoId, title, thumbnail } = downloadQueue.shift();
-    startDownload(videoId, title, thumbnail);
+    const { videoId, title, thumbnail, trackNumber, album, artist } = downloadQueue.shift();
+    startDownload(videoId, title, thumbnail, trackNumber, album, artist);
   }
 
-  function startDownload(videoId, title, thumbnail) {
+  function startDownload(videoId, title, thumbnail, trackNumber, album, artist) {
     updateBar(title, 'Starting...', thumbnail, 0);
 
     fetch('/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoId, title })
+      body: JSON.stringify({ videoId, title, trackNumber, thumbnail, album, artist })
     })
     .then(r => r.json())
     .then(d => {

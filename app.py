@@ -1,6 +1,9 @@
 import os
+import re
 import threading
 import subprocess
+import tempfile
+import requests as req
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from ytmusicapi import YTMusic
@@ -13,6 +16,7 @@ os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 ytmusic = YTMusic()
 progress_data = {}
+
 YTDLP = os.path.expanduser("~/.local/bin/yt-dlp")
 if not os.path.exists(YTDLP):
     YTDLP = "yt-dlp"
@@ -25,16 +29,14 @@ def search():
     query = request.args.get("q", "").strip()
     if not query:
         return jsonify({"error": "No query"}), 400
-
     try:
-        songs = ytmusic.search(query, filter="songs", limit=8)
+        songs   = ytmusic.search(query, filter="songs",   limit=8)
         artists = ytmusic.search(query, filter="artists", limit=4)
-        albums = ytmusic.search(query, filter="albums", limit=4)
-
+        albums  = ytmusic.search(query, filter="albums",  limit=4)
         return jsonify({
-            "songs": [format_song(s) for s in songs],
+            "songs":   [format_song(s)   for s in songs],
             "artists": [format_artist(a) for a in artists],
-            "albums": [format_album(a) for a in albums],
+            "albums":  [format_album(a)  for a in albums],
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -44,21 +46,14 @@ def search():
 def artist_page(browse_id):
     try:
         data = ytmusic.get_artist(browse_id)
-        songs = []
-        albums = []
-
-        if data.get("songs") and data["songs"].get("results"):
-            songs = [format_song(s) for s in data["songs"]["results"][:10]]
-
-        if data.get("albums") and data["albums"].get("results"):
-            albums = [format_album(a) for a in data["albums"]["results"][:10]]
-
+        songs  = [format_song(s)  for s in (data.get("songs",  {}).get("results") or [])[:10]]
+        albums = [format_album(a) for a in (data.get("albums", {}).get("results") or [])[:10]]
         return jsonify({
-            "name": data.get("name", ""),
-            "thumbnail": get_thumb(data.get("thumbnails")),
+            "name":        data.get("name", ""),
+            "thumbnail":   get_thumb(data.get("thumbnails")),
             "subscribers": data.get("subscribers", ""),
-            "songs": songs,
-            "albums": albums,
+            "songs":       songs,
+            "albums":      albums,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -67,23 +62,23 @@ def artist_page(browse_id):
 @app.route("/album/<browse_id>")
 def album_page(browse_id):
     try:
-        data = ytmusic.get_album(browse_id)
-        tracks = []
+        data    = ytmusic.get_album(browse_id)
+        artists = data.get("artists") or []
+        artist  = ", ".join(a.get("name", "") for a in artists)
+        tracks  = []
         for t in data.get("tracks", []):
-            vid = t.get("videoId")
             tracks.append({
-                "videoId": vid,
-                "title": t.get("title", ""),
-                "duration": t.get("duration", ""),
+                "videoId":     t.get("videoId"),
+                "title":       t.get("title", ""),
+                "duration":    t.get("duration", ""),
                 "trackNumber": t.get("trackNumber"),
             })
-
         return jsonify({
-            "title": data.get("title", ""),
-            "artist": data.get("artists", [{}])[0].get("name", "") if data.get("artists") else "",
-            "year": data.get("year", ""),
+            "title":     data.get("title", ""),
+            "artist":    artist,
+            "year":      data.get("year", ""),
             "thumbnail": get_thumb(data.get("thumbnails")),
-            "tracks": tracks,
+            "tracks":    tracks,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -91,11 +86,42 @@ def album_page(browse_id):
 
 # ─── Download ─────────────────────────────────────────────────────────────────
 
-def run_download(video_id, key):
+def download_thumbnail(url):
+    """Download thumbnail to a temp file, return path or None."""
+    if not url:
+        return None
+    try:
+        r = req.get(url, timeout=10)
+        r.raise_for_status()
+        tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+        tmp.write(r.content)
+        tmp.close()
+        return tmp.name
+    except Exception:
+        return None
+
+
+def clean_title(title):
+    """Strip 'Artist - ' prefix and ' (Audio)' suffix from title."""
+    title = re.sub(r"^.+ - ", "", title)
+    title = re.sub(r"\s*\(Audio\)\s*$", "", title, flags=re.IGNORECASE)
+    return title.strip()
+
+
+def run_download(video_id, key, title, track_number, thumbnail_url, album, artist):
     url = f"https://music.youtube.com/watch?v={video_id}"
-    progress_data[key] = {"status": "downloading", "percent": 5}
+    progress_data[key] = {"status": "starting", "percent": 5, "title": title}
 
     log_path = os.path.join(DOWNLOAD_FOLDER, "download.log")
+    thumb_file = download_thumbnail(thumbnail_url)
+
+    # Output folder — per album if available, else root
+    safe_album = re.sub(r'[<>:"/\\|?*]', "", album) if album else ""
+    if safe_album:
+        out_folder = os.path.join(DOWNLOAD_FOLDER, safe_album)
+        os.makedirs(out_folder, exist_ok=True)
+    else:
+        out_folder = DOWNLOAD_FOLDER
 
     cmd = [
         YTDLP,
@@ -104,12 +130,34 @@ def run_download(video_id, key):
         "--extract-audio",
         "--audio-format", "mp3",
         "--audio-quality", "192K",
-        "--embed-thumbnail",
         "--add-metadata",
-        "--output", os.path.join(DOWNLOAD_FOLDER, "%(title)s.%(ext)s"),
+        "--replace-in-metadata", "title", r"^.+ - ", "",
+        "--replace-in-metadata", "title", r"(?i)\s*\(Audio\)\s*$", "",
+        "--output", os.path.join(out_folder, "%(title)s.%(ext)s"),
         "--newline",
         "--no-warnings",
     ]
+
+    # Embed custom album art if we downloaded it, otherwise use YouTube's
+    if thumb_file:
+        cmd += [
+            "--embed-thumbnail",
+            "--convert-thumbnail", "jpg",
+            "--ppa", f"EmbedThumbnail+ffmpeg_i:-i {thumb_file}",
+        ]
+    else:
+        cmd += ["--embed-thumbnail"]
+
+    # Inject metadata via ffmpeg postprocessor
+    meta_args = []
+    if track_number:
+        meta_args += ["-metadata", f"track={track_number}"]
+    if album:
+        meta_args += ["-metadata", f"album={album}"]
+    if artist:
+        meta_args += ["-metadata", f"artist={artist}"]
+    if meta_args:
+        cmd += ["--ppa", "FFmpegMetadata+ffmpeg_o:" + " ".join(meta_args)]
 
     try:
         with open(log_path, "w") as log:
@@ -121,7 +169,7 @@ def run_download(video_id, key):
                 bufsize=1,
             )
 
-        title = None
+        final_title = title
         for line in process.stdout:
             line = line.strip()
             if not line:
@@ -129,43 +177,56 @@ def run_download(video_id, key):
             if "[download]" in line and "%" in line:
                 try:
                     pct = int(float(line.split("%")[0].split()[-1]))
-                    progress_data[key]["percent"] = min(pct, 95)
+                    progress_data[key]["percent"] = min(pct, 93)
                     progress_data[key]["status"] = "downloading"
-                except:
+                except Exception:
                     pass
             elif "[ExtractAudio]" in line or "Converting" in line:
-                progress_data[key] = {"status": "converting", "percent": 97}
-            elif "Destination" in line:
+                progress_data[key]["status"] = "converting"
+                progress_data[key]["percent"] = 96
+            elif "Destination:" in line:
                 try:
-                    title = line.split("Destination:")[-1].strip().rsplit(".", 1)[0]
-                    progress_data[key]["title"] = title
-                except:
+                    raw = line.split("Destination:")[-1].strip().rsplit(".", 1)[0]
+                    final_title = os.path.basename(raw)
+                    progress_data[key]["title"] = final_title
+                except Exception:
                     pass
 
         process.wait()
 
+        # Clean up temp thumbnail
+        if thumb_file and os.path.exists(thumb_file):
+            os.remove(thumb_file)
+
         if process.returncode == 0:
             progress_data[key] = {
-                "status": "done",
+                "status":  "done",
                 "percent": 100,
-                "title": title or "Track",
-                "folder": DOWNLOAD_FOLDER,
+                "title":   final_title,
+                "folder":  out_folder,
             }
         else:
             progress_data[key] = {
                 "status": "error",
                 "percent": 0,
-                "error": "Download failed. Check ~/Music/Downloads/download.log",
+                "error": "Download failed. Check download.log in your music folder.",
             }
+
     except Exception as e:
+        if thumb_file and os.path.exists(thumb_file):
+            os.remove(thumb_file)
         progress_data[key] = {"status": "error", "percent": 0, "error": str(e)}
 
 
 @app.route("/download", methods=["POST"])
 def start_download():
-    data = request.get_json()
-    video_id = data.get("videoId", "").strip()
-    title = data.get("title", "Track")
+    data         = request.get_json()
+    video_id     = data.get("videoId", "").strip()
+    title        = data.get("title", "Track")
+    track_number = data.get("trackNumber")
+    thumbnail    = data.get("thumbnail", "")
+    album        = data.get("album", "")
+    artist       = data.get("artist", "")
 
     if not video_id:
         return jsonify({"error": "No videoId provided"}), 400
@@ -173,7 +234,11 @@ def start_download():
     key = video_id
     progress_data[key] = {"status": "starting", "percent": 0, "title": title}
 
-    thread = threading.Thread(target=run_download, args=(video_id, key), daemon=True)
+    thread = threading.Thread(
+        target=run_download,
+        args=(video_id, key, title, track_number, thumbnail, album, artist),
+        daemon=True,
+    )
     thread.start()
 
     return jsonify({"status": "started", "key": key})
@@ -183,6 +248,11 @@ def start_download():
 def get_progress():
     key = request.args.get("key", "")
     return jsonify(progress_data.get(key, {"status": "unknown", "percent": 0}))
+
+
+@app.route("/folder")
+def get_folder():
+    return jsonify({"folder": DOWNLOAD_FOLDER})
 
 
 @app.route("/")
@@ -201,36 +271,36 @@ def get_thumb(thumbnails):
 def format_song(s):
     artists = s.get("artists") or []
     return {
-        "videoId": s.get("videoId", ""),
-        "title": s.get("title", ""),
-        "artist": ", ".join(a.get("name", "") for a in artists),
-        "album": s.get("album", {}).get("name", "") if s.get("album") else "",
-        "duration": s.get("duration", ""),
+        "videoId":   s.get("videoId", ""),
+        "title":     s.get("title", ""),
+        "artist":    ", ".join(a.get("name", "") for a in artists),
+        "album":     s.get("album", {}).get("name", "") if s.get("album") else "",
+        "duration":  s.get("duration", ""),
         "thumbnail": get_thumb(s.get("thumbnails")),
     }
 
 
 def format_artist(a):
     return {
-        "browseId": a.get("browseId", ""),
-        "name": a.get("artist", "") or a.get("name", ""),
+        "browseId":    a.get("browseId", ""),
+        "name":        a.get("artist", "") or a.get("name", ""),
         "subscribers": a.get("subscribers", ""),
-        "thumbnail": get_thumb(a.get("thumbnails")),
+        "thumbnail":   get_thumb(a.get("thumbnails")),
     }
 
 
 def format_album(a):
     artists = a.get("artists") or []
     return {
-        "browseId": a.get("browseId", ""),
-        "title": a.get("title", ""),
-        "artist": ", ".join(x.get("name", "") for x in artists),
-        "year": a.get("year", ""),
+        "browseId":  a.get("browseId", ""),
+        "title":     a.get("title", ""),
+        "artist":    ", ".join(x.get("name", "") for x in artists),
+        "year":      a.get("year", ""),
         "thumbnail": get_thumb(a.get("thumbnails")),
     }
 
 
 if __name__ == "__main__":
-    print(f"✅ Music Downloader running at http://0.0.0.0:5000")
+    print(f"✅ DECIBEL running at http://0.0.0.0:5000")
     print(f"📁 Saving to: {DOWNLOAD_FOLDER}")
     app.run(host="0.0.0.0", debug=False, port=5000)
