@@ -45,7 +45,7 @@ winget install ffmpeg
 ### 2. Clone the repo
 
 ```bash
-git clone https://github.com/yourusername/decibel.git
+git clone https://github.com/aanol-basnet/decibel.git
 cd decibel
 ```
 
