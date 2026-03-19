@@ -1,16 +1,21 @@
 # DECIBEL — Music Downloader
 
-A clean, minimal music downloader with a browser-based UI. Search for artists, albums, and songs via YouTube Music, then download them as MP3s.
+A minimal, self-hosted music downloader with a browser-based UI. Search artists, albums, and songs via YouTube Music and download them as MP3s — with full metadata, album art, and per-album folders.
 
 ---
 
 ## Features
 
-- Search artists, albums, and songs
+- Search artists, albums, and songs via YouTube Music
 - Browse artist pages and full album tracklists
-- Download individual songs or entire albums
+- Top result surfaced based on your search query
+- Recently searched artists shown on the home page
+- Download individual songs or entire albums at once
 - Download queue — handles multiple downloads one at a time
-- Saves as MP3 with metadata and album art embedded
+- Automatically finds the studio version of each track
+- Saves as MP3 at 192kbps with embedded album art
+- Full metadata — title, artist, album, track number
+- Organizes downloads into per-album folders
 
 ---
 
@@ -55,12 +60,12 @@ cd decibel
 
 **Ubuntu / Debian / macOS**
 ```bash
-pip install yt-dlp flask flask-cors ytmusicapi --break-system-packages
+pip install yt-dlp flask flask-cors ytmusicapi mutagen --break-system-packages
 ```
 
 **Windows**
 ```bash
-pip install yt-dlp flask flask-cors ytmusicapi
+pip install yt-dlp flask flask-cors ytmusicapi mutagen
 ```
 
 ---
@@ -103,10 +108,10 @@ http://<your-ip>:5000
 
 ## Downloads
 
-Files are saved to:
+Files are saved to per-album folders inside:
 
-- **Linux / macOS**: `~/Music/Downloads`
-- **Windows**: `C:\Users\<you>\Music\Downloads`
+- **Linux / macOS**: `~/Music/Downloads/<Album Name>/`
+- **Windows**: `C:\Users\<you>\Music\Downloads\<Album Name>\`
 
 ---
 
@@ -115,6 +120,7 @@ Files are saved to:
 ```
 decibel/
 ├── app.py           # Flask backend
+├── README.md
 └── static/
     └── index.html   # Frontend UI
 ```
@@ -124,10 +130,13 @@ decibel/
 ## Troubleshooting
 
 **Rate limited by YouTube?**
-Wait 24 hours or use a cookies file. Export cookies from your browser using the "Get cookies.txt LOCALLY" extension, save as `cookies.txt` in the project folder, then add `--cookie-file cookies.txt` to the yt-dlp command in `app.py`.
+Wait 24 hours or export your browser cookies using the "Get cookies.txt LOCALLY" extension, save as `cookies.txt` in the project folder, then add `--cookie-file ~/cookies.txt` to the yt-dlp command in `app.py`.
 
 **`yt-dlp` not found?**
 Make sure `~/.local/bin` is on your PATH — see step 4 above.
 
-**ffmpeg not found?**
+**`ffmpeg` not found?**
 Make sure ffmpeg is installed and on your PATH. Test with `ffmpeg -version`.
+
+**Songs not sorting by track number on my phone?**
+Make sure you downloaded the full album using the "Download All" button — this passes the correct track numbers to each file's metadata.
