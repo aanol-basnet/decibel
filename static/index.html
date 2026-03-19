@@ -605,19 +605,25 @@
   <div class="scroll-area">
 
     <!-- Home -->
+    <!-- Home -->
     <div class="view active" id="view-home">
       <div class="home-display">FIND<br>YOUR<br>MUSIC</div>
       <div class="home-divider"></div>
-      <div class="home-sub">Search artists, songs, or albums above</div>
+      <div id="recent-artists-section" style="display:none;">
+        <div class="section-label">Recently searched</div>
+        <div class="card-grid" id="recent-artists-grid"></div>
+      </div>
+      <div id="home-hint" class="home-sub">Search artists, songs, or albums above</div>
     </div>
 
     <!-- Search -->
     <div class="view" id="view-search">
-      <div class="section-label">Songs</div>
+      <div id="search-top-result"></div>
+      <div class="section-label" id="search-songs-label">Songs</div>
       <div class="song-list" id="search-songs"></div>
-      <div class="section-label">Artists</div>
+      <div class="section-label" id="search-artists-label">Artists</div>
       <div class="card-grid" id="search-artists"></div>
-      <div class="section-label">Albums</div>
+      <div class="section-label" id="search-albums-label">Albums</div>
       <div class="card-grid" id="search-albums"></div>
     </div>
 
@@ -696,28 +702,51 @@
   }).catch(() => {});
 
   // ── Search ─────────────────────────────────────────────────────────────────
-  document.getElementById('search-input').addEventListener('input', e => {
-    clearTimeout(searchTimeout);
-    const q = e.target.value.trim();
-    if (!q) { showHome(); return; }
-    searchTimeout = setTimeout(() => doSearch(q), 420);
+  let recentArtists = [];
+
+  document.getElementById("search-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      clearTimeout(searchTimeout);
+      const q = e.target.value.trim();
+      if (q) doSearch(q);
+    }
   });
 
   function doSearch(q) {
-    showView('view-search');
-    document.getElementById('search-songs').innerHTML = loadingHTML();
-    document.getElementById('search-artists').innerHTML = '';
-    document.getElementById('search-albums').innerHTML = '';
+    showView("view-search");
+    document.getElementById("search-top-result").innerHTML = "";
+    document.getElementById("search-songs").innerHTML = loadingHTML();
+    document.getElementById("search-artists").innerHTML = "";
+    document.getElementById("search-albums").innerHTML = "";
 
     fetch(`/search?q=${encodeURIComponent(q)}`)
       .then(r => r.json())
       .then(d => {
         if (d.error) { showToast(d.error); return; }
-        renderSongs(d.songs || [], 'search-songs');
-        renderArtistCards(d.artists || [], 'search-artists');
-        renderAlbumCards(d.albums || [], 'search-albums');
+        const songs   = d.songs   || [];
+        const artists = d.artists || [];
+        const albums  = d.albums  || [];
+
+        // Determine top result: artist > album > song based on query match
+        const ql = q.toLowerCase();
+        const topArtist = artists.find(a => a.name.toLowerCase().includes(ql));
+        const topAlbum  = albums.find(a => a.title.toLowerCase().includes(ql));
+        const topSong   = songs.find(s => s.title.toLowerCase().includes(ql));
+
+        if (topArtist) {
+          renderTopResult("artist", topArtist);
+          saveRecentArtist(topArtist);
+        } else if (topAlbum) {
+          renderTopResult("album", topAlbum);
+        } else if (topSong) {
+          renderTopResult("song", topSong);
+        }
+
+        renderSongs(songs, "search-songs");
+        renderArtistCards(artists, "search-artists");
+        renderAlbumCards(albums, "search-albums");
       })
-      .catch(() => showToast('Search failed'));
+      .catch(() => showToast("Search failed"));
   }
 
   // ── Artist ─────────────────────────────────────────────────────────────────
@@ -779,6 +808,20 @@
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
+  function renderSongRow(s, i, numbered = false) {
+    return `<div class="song-row">
+      ${numbered ? `<span class="song-idx">${i + 1}</span>` : `<div class="song-art">${s.thumbnail ? `<img src="${s.thumbnail}" alt="">` : ""}</div>`}
+      <div class="song-info">
+        <div class="song-title">${esc(s.title)}</div>
+        <div class="song-meta">${esc(s.artist || "")}${s.album ? " · " + esc(s.album) : ""}</div>
+      </div>
+      <span class="song-dur">${s.duration || ""}</span>
+      ${s.videoId
+        ? `<button class="dl-btn" id="btn-${s.videoId}" onclick="queueDownload('${s.videoId}','${esc(s.title)}','${esc(s.thumbnail||"")}',${s.trackNumber||"null"},'${esc(s.album||"")}','${esc(s.artist||"")}')">Get</button>`
+        : `<button class="dl-btn" disabled style="opacity:0.2">N/A</button>`}
+    </div>`;
+  }
+
   function renderSongs(songs, cid, numbered = false) {
     const el = document.getElementById(cid);
     if (!songs.length) { el.innerHTML = '<div class="empty">— no results —</div>'; return; }
@@ -907,10 +950,57 @@
   }
 
   // ── Nav ────────────────────────────────────────────────────────────────────
+  function renderTopResult(type, item) {
+    const el = document.getElementById("search-top-result");
+    if (type === "artist") {
+      el.innerHTML = `
+        <div class="section-label" style="margin-top:0;">Top result</div>
+        <div class="card" style="max-width:200px; margin-bottom:8px;" onclick="openArtist('${item.browseId}')">
+          <div class="card-art circle">${item.thumbnail ? `<img src="${item.thumbnail}" alt="">` : ""}</div>
+          <div class="card-title">${esc(item.name)}</div>
+          <div class="card-sub">Artist</div>
+        </div>`;
+    } else if (type === "album") {
+      el.innerHTML = `
+        <div class="section-label" style="margin-top:0;">Top result</div>
+        <div class="card" style="max-width:200px; margin-bottom:8px;" onclick="openAlbum('${item.browseId}')">
+          <div class="card-art">${item.thumbnail ? `<img src="${item.thumbnail}" alt="">` : ""}</div>
+          <div class="card-title">${esc(item.title)}</div>
+          <div class="card-sub">Album</div>
+        </div>`;
+    } else if (type === "song") {
+      el.innerHTML = `
+        <div class="section-label" style="margin-top:0;">Top result</div>
+        <div class="song-list" style="margin-bottom:8px;">${renderSongRow(item, 0)}</div>`;
+    }
+  }
+
+  function saveRecentArtist(artist) {
+    recentArtists = recentArtists.filter(a => a.browseId !== artist.browseId);
+    recentArtists.unshift(artist);
+    if (recentArtists.length > 8) recentArtists = recentArtists.slice(0, 8);
+    updateRecentArtistsHome();
+  }
+
+  function updateRecentArtistsHome() {
+    const section = document.getElementById("recent-artists-section");
+    const grid    = document.getElementById("recent-artists-grid");
+    const hint    = document.getElementById("home-hint");
+    if (!recentArtists.length) { section.style.display = "none"; hint.style.display = "block"; return; }
+    hint.style.display = "none";
+    section.style.display = "block";
+    grid.innerHTML = recentArtists.map(a => `
+      <div class="card" onclick="openArtist('${a.browseId}')">
+        <div class="card-art circle">${a.thumbnail ? `<img src="${a.thumbnail}" alt="">` : ""}</div>
+        <div class="card-title">${esc(a.name)}</div>
+        <div class="card-sub">Artist</div>
+      </div>`).join("");
+  }
+
   function showHome() {
-    document.getElementById('search-input').value = '';
+    document.getElementById("search-input").value = "";
     navStack = [];
-    showView('view-home');
+    showView("view-home");
   }
 
   function currentView() {

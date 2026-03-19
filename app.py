@@ -131,9 +131,27 @@ def write_metadata(filepath, title=None, artist=None, album=None, track_number=N
     audio.save()
 
 
+def find_studio_version(title, artist):
+    """Search YouTube Music for the studio/audio version and return its video ID."""
+    try:
+        query = f"{artist} {title}" if artist else title
+        results = ytmusic.search(query, filter="songs", limit=5)
+        for r in results:
+            if r.get("videoId") and r.get("title", "").lower() == title.lower():
+                return r["videoId"]
+        if results and results[0].get("videoId"):
+            return results[0]["videoId"]
+    except Exception:
+        pass
+    return None
+
 def run_download(video_id, key, title, track_number, thumbnail_url, album, artist):
+    progress_data[key] = {"status": "starting", "percent": 3, "title": title}
+    # Try to swap to studio/audio version
+    studio_id = find_studio_version(title, artist)
+    if studio_id:
+        video_id = studio_id
     url = f"https://music.youtube.com/watch?v={video_id}"
-    progress_data[key] = {"status": "starting", "percent": 5, "title": title}
 
     log_path = os.path.join(DOWNLOAD_FOLDER, "download.log")
     thumb_file = download_thumbnail(thumbnail_url)
