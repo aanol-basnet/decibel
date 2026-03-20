@@ -16,11 +16,96 @@ CORS(app)
 DOWNLOAD_FOLDER = os.path.join(os.path.expanduser("~"), "Music", "Downloads")
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
-ytmusic = YTMusic()
+_auth = os.path.join(os.path.dirname(__file__), "browser.json")
+ytmusic = YTMusic(_auth) if os.path.exists(_auth) else YTMusic()
 progress_data = {}
 
 # Works on Windows, Linux, and macOS
 YTDLP = "yt-dlp"
+
+
+# ─── Home / Library ───────────────────────────────────────────────────────────
+
+@app.route("/home")
+def home():
+    try:
+        data     = ytmusic.get_home(limit=6)
+        sections = []
+        for section in data:
+            title   = section.get("title", "")
+            results = section.get("contents", [])
+            items   = []
+            for r in results:
+                if r.get("videoId"):
+                    items.append(format_song(r))
+                elif r.get("browseId") and r.get("artists"):
+                    items.append({"type": "album", **format_album(r)})
+                elif r.get("browseId"):
+                    items.append({"type": "artist", **format_artist(r)})
+            if items:
+                sections.append({"title": title, "items": items[:8]})
+        return jsonify({"sections": sections})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# Cache all library artists on first load
+_library_artists_cache = None
+
+@app.route("/library/artists")
+def library_artists():
+    global _library_artists_cache
+    page   = int(request.args.get("page", 0))
+    size   = 50
+    try:
+        if _library_artists_cache is None:
+            data = ytmusic.get_library_artists(limit=500)
+            print("Library artists fetched:", len(data))
+            _library_artists_cache = [format_artist(a) for a in data]
+        artists  = _library_artists_cache
+        start    = page * size
+        end      = start + size
+        return jsonify({
+            "artists":  artists[start:end],
+            "total":    len(artists),
+            "page":     page,
+            "has_more": end < len(artists),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/library/playlists")
+def library_playlists():
+    try:
+        data = ytmusic.get_library_playlists(limit=50)
+        playlists = []
+        for p in data:
+            playlists.append({
+                "playlistId": p.get("playlistId", ""),
+                "title":      p.get("title", ""),
+                "count":      p.get("count", ""),
+                "thumbnail":  get_thumb(p.get("thumbnails")),
+            })
+        return jsonify({"playlists": playlists})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/playlist/<playlist_id>")
+def playlist_page(playlist_id):
+    try:
+        data   = ytmusic.get_playlist(playlist_id, limit=100)
+        tracks = [format_song(t) for t in data.get("tracks", []) if t.get("videoId")]
+        return jsonify({
+            "title":     data.get("title", ""),
+            "author":    data.get("author", {}).get("name", "") if data.get("author") else "",
+            "count":     data.get("trackCount", len(tracks)),
+            "thumbnail": get_thumb(data.get("thumbnails")),
+            "tracks":    tracks,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ─── Search ───────────────────────────────────────────────────────────────────
@@ -206,8 +291,6 @@ def run_download(video_id, key, title, track_number, thumbnail_url, album, artis
 
     try:
         with open(log_path, "w") as log:
-            print("CMD:", cmd)
-            print("OUT PATH:", out_path)
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,

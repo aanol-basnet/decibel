@@ -580,9 +580,17 @@
   </div>
 
   <nav class="sidebar-nav">
-    <div class="nav-item active" onclick="showHome()">
+    <div class="nav-item active" id="nav-home" onclick="showHome()">
       <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
       Home
+    </div>
+    <div class="nav-item" id="nav-library" onclick="showLibrary()">
+      <svg viewBox="0 0 24 24"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
+      Artists
+    </div>
+    <div class="nav-item" id="nav-playlists" onclick="showPlaylists()">
+      <svg viewBox="0 0 24 24"><path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/></svg>
+      Playlists
     </div>
   </nav>
 
@@ -605,7 +613,6 @@
   <div class="scroll-area">
 
     <!-- Home -->
-    <!-- Home -->
     <div class="view active" id="view-home">
       <div class="home-display">FIND<br>YOUR<br>MUSIC</div>
       <div class="home-divider"></div>
@@ -613,7 +620,39 @@
         <div class="section-label">Recently searched</div>
         <div class="card-grid" id="recent-artists-grid"></div>
       </div>
+      <div id="home-recommendations"></div>
       <div id="home-hint" class="home-sub">Search artists, songs, or albums above</div>
+    </div>
+
+    <!-- Library -->
+    <div class="view" id="view-library">
+      <div class="section-label" style="margin-top:0;">Subscribed artists</div>
+      <div class="card-grid" id="library-artists"></div>
+    </div>
+
+    <!-- Playlists -->
+    <div class="view" id="view-playlists">
+      <div class="section-label" style="margin-top:0;">Your playlists</div>
+      <div class="card-grid" id="playlists-grid"></div>
+    </div>
+
+    <!-- Playlist tracks -->
+    <div class="view" id="view-playlist">
+      <div class="back-btn" onclick="goBack()">
+        <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+        Back
+      </div>
+      <div class="album-header">
+        <div class="album-header-art"><img id="playlist-img" src="" alt="" onerror="this.style.display='none'"/></div>
+        <div>
+          <div class="album-type">Playlist</div>
+          <div class="album-header-title" id="playlist-title"></div>
+          <div class="album-header-sub" id="playlist-sub"></div>
+          <button class="dl-all-btn" id="dl-playlist-btn">Download All</button>
+        </div>
+      </div>
+      <div class="section-label">Tracks</div>
+      <div class="song-list" id="playlist-tracks"></div>
     </div>
 
     <!-- Search -->
@@ -691,6 +730,11 @@
 <script>
   let pollInterval = null;
   let downloadQueue = [];
+  let homeLoaded = false;
+  let libraryPage = 0;
+  let libraryLoaded = false;
+  let libraryFetching = false;
+  let libraryDone = false;
   let isDownloading = false;
   let history = [];
   let navStack = [];
@@ -700,6 +744,7 @@
   fetch('/folder').then(r => r.json()).then(d => {
     document.getElementById('bar-folder').textContent = d.folder;
   }).catch(() => {});
+  loadHomeRecommendations();
 
   // ── Search ─────────────────────────────────────────────────────────────────
   let recentArtists = [];
@@ -727,20 +772,22 @@
         const artists = d.artists || [];
         const albums  = d.albums  || [];
 
-        // Determine top result: artist > album > song based on query match
+        // Build top results — up to 5, closest matches first
         const ql = q.toLowerCase();
-        const topArtist = artists.find(a => a.name.toLowerCase().includes(ql));
-        const topAlbum  = albums.find(a => a.title.toLowerCase().includes(ql));
-        const topSong   = songs.find(s => s.title.toLowerCase().includes(ql));
-
-        if (topArtist) {
-          renderTopResult("artist", topArtist);
-          saveRecentArtist(topArtist);
-        } else if (topAlbum) {
-          renderTopResult("album", topAlbum);
-        } else if (topSong) {
-          renderTopResult("song", topSong);
+        const topResults = [];
+        const matchArtists = artists.filter(a => a.name.toLowerCase().includes(ql));
+        const matchAlbums  = albums.filter(a => a.title.toLowerCase().includes(ql));
+        const matchSongs   = songs.filter(s => s.title.toLowerCase().includes(ql));
+        matchArtists.forEach(a => topResults.push({ type: "artist", item: a }));
+        matchAlbums.forEach(a  => topResults.push({ type: "album",  item: a }));
+        matchSongs.forEach(s   => topResults.push({ type: "song",   item: s }));
+        if (topResults.length < 5) {
+          artists.forEach(a => { if (!matchArtists.includes(a) && topResults.length < 5) topResults.push({ type: "artist", item: a }); });
+          albums.forEach(a  => { if (!matchAlbums.includes(a)  && topResults.length < 5) topResults.push({ type: "album",  item: a }); });
+          songs.forEach(s   => { if (!matchSongs.includes(s)   && topResults.length < 5) topResults.push({ type: "song",   item: s }); });
         }
+        renderTopResults(topResults.slice(0, 5));
+        topResults.filter(r => r.type === "artist").slice(0, 3).forEach(r => saveRecentArtist(r.item));
 
         renderSongs(songs, "search-songs");
         renderArtistCards(artists, "search-artists");
@@ -950,29 +997,35 @@
   }
 
   // ── Nav ────────────────────────────────────────────────────────────────────
-  function renderTopResult(type, item) {
+  function renderTopResults(results) {
     const el = document.getElementById("search-top-result");
-    if (type === "artist") {
-      el.innerHTML = `
-        <div class="section-label" style="margin-top:0;">Top result</div>
-        <div class="card" style="max-width:200px; margin-bottom:8px;" onclick="openArtist('${item.browseId}')">
-          <div class="card-art circle">${item.thumbnail ? `<img src="${item.thumbnail}" alt="">` : ""}</div>
-          <div class="card-title">${esc(item.name)}</div>
+    if (!results.length) { el.innerHTML = ""; return; }
+    const cards = results.map(r => {
+      if (r.type === "artist") {
+        return `<div class="card" onclick="openArtist('${r.item.browseId}')">
+          <div class="card-art circle">${r.item.thumbnail ? `<img src="${r.item.thumbnail}" alt="">` : ""}</div>
+          <div class="card-title">${esc(r.item.name)}</div>
           <div class="card-sub">Artist</div>
         </div>`;
-    } else if (type === "album") {
-      el.innerHTML = `
-        <div class="section-label" style="margin-top:0;">Top result</div>
-        <div class="card" style="max-width:200px; margin-bottom:8px;" onclick="openAlbum('${item.browseId}')">
-          <div class="card-art">${item.thumbnail ? `<img src="${item.thumbnail}" alt="">` : ""}</div>
-          <div class="card-title">${esc(item.title)}</div>
-          <div class="card-sub">Album</div>
+      } else if (r.type === "album") {
+        return `<div class="card" onclick="openAlbum('${r.item.browseId}')">
+          <div class="card-art">${r.item.thumbnail ? `<img src="${r.item.thumbnail}" alt="">` : ""}</div>
+          <div class="card-title">${esc(r.item.title)}</div>
+          <div class="card-sub">${[r.item.year, r.item.artist].filter(Boolean).join(" · ")}</div>
         </div>`;
-    } else if (type === "song") {
-      el.innerHTML = `
-        <div class="section-label" style="margin-top:0;">Top result</div>
-        <div class="song-list" style="margin-bottom:8px;">${renderSongRow(item, 0)}</div>`;
-    }
+      } else {
+        return `<div class="card">
+          <div class="card-art">${r.item.thumbnail ? `<img src="${r.item.thumbnail}" alt="">` : ""}</div>
+          <div class="card-title">${esc(r.item.title)}</div>
+          <div class="card-sub" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>${esc(r.item.artist || "")}</span>
+            ${r.item.videoId ? `<button class="dl-btn" style="opacity:1;" id="btn-${r.item.videoId}" onclick="event.stopPropagation();queueDownload('${r.item.videoId}','${esc(r.item.title)}','${esc(r.item.thumbnail||"")}',null,'${esc(r.item.album||"")}','${esc(r.item.artist||"")}')">Get</button>` : ""}
+          </div>
+        </div>`;
+      }
+    }).join("");
+    el.innerHTML = `<div class="section-label" style="margin-top:0;">Top results</div>
+      <div class="card-grid" style="margin-bottom:8px;">${cards}</div>`;
   }
 
   function saveRecentArtist(artist) {
@@ -997,10 +1050,194 @@
       </div>`).join("");
   }
 
+  function setActiveNav(id) {
+    document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+    const el = document.getElementById(id);
+    if (el) el.classList.add("active");
+  }
+
   function showHome() {
     document.getElementById("search-input").value = "";
     navStack = [];
+    setActiveNav("nav-home");
     showView("view-home");
+    loadHomeRecommendations();
+  }
+
+  function showLibrary() {
+    navStack = [];
+    setActiveNav("nav-library");
+    showView("view-library");
+    if (libraryLoaded) return;
+    libraryLoaded = true;
+    loadLibraryPage(0);
+    setupLibraryScroll();
+  }
+
+  function setupLibraryScroll() {
+    // Use the main scroll area for infinite scroll detection
+    const scrollEl = document.querySelector(".scroll-area");
+    scrollEl.addEventListener("scroll", () => {
+      if (libraryDone || libraryFetching) return;
+      if (document.getElementById("view-library").classList.contains("active")) {
+        const distFromBottom = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+        if (distFromBottom < 200) {
+          loadLibraryPage(libraryPage);
+        }
+      }
+    });
+  }
+
+  function loadLibraryPage(page) {
+    if (libraryFetching || libraryDone) return;
+    libraryFetching = true;
+    const el = document.getElementById("library-artists");
+
+    if (page === 0) {
+      el.innerHTML = loadingHTML();
+    } else {
+      // Show subtle loading indicator at bottom
+      const indicator = document.createElement("div");
+      indicator.id = "library-loading-indicator";
+      indicator.className = "loading";
+      indicator.innerHTML = '<div class="spinner"></div>Loading';
+      el.appendChild(indicator);
+    }
+
+    fetch("/library/artists?page=" + page)
+      .then(r => r.json())
+      .then(d => {
+        libraryFetching = false;
+        const indicator = document.getElementById("library-loading-indicator");
+        if (indicator) indicator.remove();
+
+        if (d.error) { el.innerHTML = '<div class="empty">— ' + d.error + ' —</div>'; return; }
+        if (page === 0) el.innerHTML = "";
+
+        (d.artists || []).forEach(a => {
+          const img = a.thumbnail ? '<img src="' + a.thumbnail + '" alt="">' : '';
+          const card = document.createElement("div");
+          card.className = "card";
+          card.innerHTML = '<div class="card-art circle">' + img + '</div>' +
+            '<div class="card-title">' + esc(a.name) + '</div>' +
+            '<div class="card-sub">Artist</div>';
+          card.addEventListener("click", () => openArtist(a.browseId));
+          el.appendChild(card);
+        });
+
+        if (d.has_more) {
+          libraryPage = page + 1;
+        } else {
+          libraryDone = true;
+        }
+      })
+      .catch(() => {
+        libraryFetching = false;
+        el.innerHTML = '<div class="empty">— failed to load —</div>';
+      });
+  }
+
+  function showPlaylists() {
+    navStack = [];
+    setActiveNav("nav-playlists");
+    showView("view-playlists");
+    const el = document.getElementById("playlists-grid");
+    if (el.innerHTML) return;
+    el.innerHTML = loadingHTML();
+    fetch("/library/playlists")
+      .then(r => r.json())
+      .then(d => {
+        if (d.error) { el.innerHTML = '<div class="empty">— ' + d.error + ' —</div>'; return; }
+        const playlists = d.playlists || [];
+        if (!playlists.length) { el.innerHTML = '<div class="empty">— no playlists found —</div>'; return; }
+        el.innerHTML = playlists.map(p => {
+          const img = p.thumbnail ? '<img src="' + p.thumbnail + '" alt="">' : '';
+          return '<div class="card" data-pid="' + p.playlistId + '">' +
+            '<div class="card-art">' + img + '</div>' +
+            '<div class="card-title">' + esc(p.title) + '</div>' +
+            '<div class="card-sub">' + (p.count ? p.count + ' songs' : 'Playlist') + '</div>' +
+            '</div>';
+        }).join("");
+        el.querySelectorAll('.card[data-pid]').forEach(c => {
+          c.addEventListener('click', () => openPlaylist(c.dataset.pid));
+        });
+      })
+      .catch(() => { el.innerHTML = '<div class="empty">— failed to load —</div>'; });
+  }
+
+  function openPlaylist(id) {
+    navStack.push(currentView());
+    showView("view-playlist");
+    document.getElementById("playlist-tracks").innerHTML = loadingHTML();
+    document.getElementById("playlist-title").textContent = "";
+    document.getElementById("playlist-sub").textContent = "";
+    document.getElementById("playlist-img").src = "";
+
+    fetch("/playlist/" + id)
+      .then(r => r.json())
+      .then(d => {
+        if (d.error) { showToast(d.error); return; }
+        document.getElementById("playlist-title").textContent = d.title;
+        document.getElementById("playlist-sub").textContent = [d.author, d.count + " songs"].filter(Boolean).join(" · ");
+        if (d.thumbnail) document.getElementById("playlist-img").src = d.thumbnail;
+        const tracks = d.tracks || [];
+        renderSongs(tracks, "playlist-tracks");
+        document.getElementById("dl-playlist-btn").onclick = () => {
+          tracks.forEach(t => {
+            if (t.videoId) queueDownload(t.videoId, t.title, t.thumbnail, null, t.album, t.artist);
+          });
+          showToast("Queued " + tracks.length + " tracks");
+        };
+      })
+      .catch(() => showToast("Failed to load playlist"));
+  }
+
+  function makeHomeCard(item) {
+    const img = item.thumbnail ? '<img src="' + item.thumbnail + '" alt="">' : '';
+    if (item.videoId) {
+      const onclick = "queueDownload('" + item.videoId + "','" + esc(item.title) + "','" + esc(item.thumbnail || '') + "',null,'" + esc(item.album || '') + "','" + esc(item.artist || '') + "')";
+      const dlBtn = '<button class="dl-btn" style="opacity:1;" onclick="' + onclick + '">Get</button>';
+      return '<div class="card">' +
+        '<div class="card-art">' + img + '</div>' +
+        '<div class="card-title">' + esc(item.title) + '</div>' +
+        '<div class="card-sub" style="display:flex;justify-content:space-between;align-items:center;">' +
+          '<span>' + esc(item.artist || '') + '</span>' + dlBtn +
+        '</div></div>';
+    } else if (item.browseId && item.type === "album") {
+      return '<div class="card" onclick="openAlbum(\'' + item.browseId + '\')">' +
+        '<div class="card-art">' + img + '</div>' +
+        '<div class="card-title">' + esc(item.title) + '</div>' +
+        '<div class="card-sub">Album</div></div>';
+    } else if (item.browseId) {
+      return '<div class="card" onclick="openArtist(\'' + item.browseId + '\')">' +
+        '<div class="card-art circle">' + img + '</div>' +
+        '<div class="card-title">' + esc(item.name || item.title || '') + '</div>' +
+        '<div class="card-sub">Artist</div></div>';
+    }
+    return '';
+  }
+
+  function loadHomeRecommendations() {
+    if (homeLoaded) return;
+    const el = document.getElementById("home-recommendations");
+    el.innerHTML = loadingHTML();
+    fetch("/home")
+      .then(r => r.json())
+      .then(d => {
+        if (d.error || !d.sections || !d.sections.length) {
+          el.innerHTML = "";
+          return;
+        }
+        homeLoaded = true;
+        document.getElementById("home-hint").style.display = "none";
+        el.innerHTML = d.sections.map((s, idx) => {
+          const cards = s.items.map(item => makeHomeCard(item)).join("");
+          const mt = idx === 0 ? "0" : "28px";
+          return '<div class="section-label" style="margin-top:' + mt + ';">' + esc(s.title) + '</div>' +
+            '<div class="card-grid" style="margin-bottom:8px;">' + cards + '</div>';
+        }).join("");
+      })
+      .catch(() => { el.innerHTML = ""; });
   }
 
   function currentView() {
