@@ -4,7 +4,7 @@ import threading
 import subprocess
 import tempfile
 import requests as req
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
 from ytmusicapi import YTMusic
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, TRCK, error as ID3Error
@@ -22,6 +22,9 @@ progress_data = {}
 
 # Works on Windows, Linux, and macOS
 YTDLP = "yt-dlp"
+
+# Current playing track info (for streaming state)
+now_playing = {}
 
 
 # ─── Home / Library ───────────────────────────────────────────────────────────
@@ -393,6 +396,105 @@ def get_progress():
 @app.route("/folder")
 def get_folder():
     return jsonify({"folder": DOWNLOAD_FOLDER})
+
+
+# ─── Streaming ────────────────────────────────────────────────────────────────
+
+def get_audio_stream_url(video_id):
+    """Get the direct audio stream URL from yt-dlp."""
+    try:
+        cmd = [
+            YTDLP,
+            f"https://music.youtube.com/watch?v={video_id}",
+            "--format", "bestaudio/best",
+            "--get-url",
+            "--no-warnings",
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception as e:
+        print(f"Error getting stream URL: {e}")
+    return None
+
+
+@app.route("/stream/<video_id>")
+def stream_audio(video_id):
+    """Proxy audio stream from YouTube Music."""
+    global now_playing
+    
+    stream_url = get_audio_stream_url(video_id)
+    if not stream_url:
+        return jsonify({"error": "Could not get stream URL"}), 500
+    
+    # Store now playing info
+    now_playing = {
+        "videoId": video_id,
+        "stream_url": stream_url,
+    }
+    
+    # Stream the audio content
+    try:
+        def generate():
+            with req.get(stream_url, stream=True, timeout=30) as r:
+                r.raise_for_status()
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        yield chunk
+        
+        # Get content type from response
+        with req.head(stream_url, timeout=10) as r:
+            content_type = r.headers.get("Content-Type", "audio/webm")
+        
+        return Response(
+            stream_with_context(generate()),
+            mimetype=content_type,
+            headers={
+                "Cache-Control": "no-cache",
+                "Accept-Ranges": "bytes",
+            }
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/now_playing")
+def get_now_playing():
+    """Get current now playing info."""
+    return jsonify(now_playing)
+
+
+@app.route("/api/watch/playlist")
+def watch_playlist():
+    """Get watch playlist (related songs) for a given video ID.
+    This is what YouTube Music uses for auto-generated queues/radio mode.
+    """
+    video_id = request.args.get("videoId", "").strip()
+    if not video_id:
+        return jsonify({"error": "No videoId provided"}), 400
+    
+    try:
+        # Get watch playlist - returns related songs for radio mode
+        data = ytmusic.get_watch_playlist(video_id, limit=25)
+        
+        tracks = []
+        for t in data.get("tracks", []):
+            if t.get("videoId"):
+                tracks.append(format_song(t))
+        
+        return jsonify({
+            "tracks": tracks,
+            "lyrics": data.get("lyrics"),  # May include lyrics ID
+        })
+    except Exception as e:
+        print(f"Watch playlist error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/")
