@@ -167,7 +167,82 @@
 		.queue-item-remove:hover { background: #ff4444; color: white; }
 		.queue-item-remove svg { width: 12px; height: 12px; fill: currentColor; }
 
+		.download-item {
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+			padding: 8px 24px;
+			transition: background 0.15s;
+			position: relative;
+		}
+
+		.download-item:hover { background: var(--bg2); }
+
+		.download-item-info {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+		}
+
+		.d-thumb {
+			width: 40px; height: 40px;
+			border-radius: 4px;
+			background: var(--bg3);
+			flex-shrink: 0;
+			overflow: hidden;
+		}
+
+		.d-thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+		.d-info { flex: 1; min-width: 0; }
+		.d-title { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		.d-artist { font-size: 10px; color: var(--muted); margin-top: 2px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+		.download-progress {
+			height: 3px;
+			background: var(--border2);
+			border-radius: 2px;
+			overflow: hidden;
+			margin-top: 4px;
+		}
+
+		.download-progress-fill {
+			height: 100%;
+			background: var(--accent);
+			transition: width 0.3s;
+		}
+
+		.download-status {
+			font-family: var(--mono);
+			font-size: 9px;
+			color: var(--muted);
+			display: flex;
+			justify-content: space-between;
+			margin-top: 2px;
+		}
+
+		.download-item.complete .download-progress-fill { background: var(--accent); }
+		.download-item.complete .d-title { color: var(--accent); }
+
 		/* ── Right Panel (Queue/Lyrics) ── */
+		.right-panel-overlay {
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 350px;
+			bottom: 80px;
+			background: rgba(0, 0, 0, 0.5);
+			opacity: 0;
+			pointer-events: none;
+			transition: opacity 0.3s ease;
+			z-index: 99;
+		}
+
+		.right-panel-overlay.open {
+			opacity: 1;
+			pointer-events: auto;
+		}
+
 		.right-panel {
 			width: 350px;
 			border-left: 1px solid var(--border);
@@ -535,6 +610,28 @@
 		.card-title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 		.card-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 4px; letter-spacing: 0.3px; }
 
+		.card-delete-btn {
+			position: absolute;
+			top: 8px;
+			right: 8px;
+			width: 28px;
+			height: 28px;
+			border-radius: 50%;
+			background: rgba(0, 0, 0, 0.7);
+			border: none;
+			color: var(--muted);
+			cursor: pointer;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			opacity: 0;
+			transition: opacity 0.15s, background 0.15s, color 0.15s;
+		}
+
+		.card:hover .card-delete-btn { opacity: 1; }
+		.card-delete-btn:hover { background: #ff4444; color: white; }
+		.card-delete-btn svg { width: 14px; height: 14px; fill: currentColor; }
+
 		/* Artist page */
 		.artist-header {
 			display: flex;
@@ -755,6 +852,25 @@
 		.bar-btn.play-pause:hover { background: var(--accent); color: var(--bg); transform: scale(1.1); }
 		.bar-btn.play-pause svg { width: 18px; height: 18px; }
 		.bar-btn.active { color: var(--accent); }
+		.bar-btn.liked {
+			background: var(--text);
+			color: var(--bg);
+		}
+		.bar-btn.liked:hover {
+			background: var(--accent);
+			color: var(--bg);
+		}
+		.like-icon {
+			width: 20px;
+			height: 20px;
+			fill: none;
+			stroke: currentColor;
+			stroke-width: 2;
+		}
+		.bar-btn.liked .like-icon {
+			fill: currentColor;
+			stroke: none;
+		}
 
 		.bar-progress {
 			display: flex;
@@ -812,29 +928,39 @@
 		.bar-right {
 			display: flex;
 			align-items: center;
-			gap: 12px;
-			width: 200px;
-			justify-content: flex-end;
+			gap: 4px;
+			padding-right: 16px;
 		}
 
 		.volume-control {
 			display: flex;
 			align-items: center;
 			gap: 8px;
-			width: 120px;
+			margin-left: 8px;
+			position: relative;
+		}
+
+		.volume-slider-wrap {
+			position: relative;
+			display: flex;
+			align-items: center;
+			justify-content: flex-end;
 		}
 
 		.volume-slider {
-			flex: 1;
+			width: 80px;
 			height: 4px;
 			background: var(--border2);
 			border-radius: 2px;
 			cursor: pointer;
 			position: relative;
-			transition: height 0.1s;
+			transition: width 0.2s ease;
+			overflow: visible;
 		}
 
-		.volume-slider:hover { height: 6px; }
+		.volume-slider:hover {
+			width: 100px;
+		}
 
 		.volume-fill {
 			height: 100%;
@@ -842,9 +968,19 @@
 			border-radius: 2px;
 			width: 80%;
 			transition: background 0.15s;
+			position: absolute;
+			left: 0;
+			top: 0;
+			pointer-events: none;
 		}
 
-		.volume-slider:hover .volume-fill { background: var(--accent); }
+		.volume-slider:hover .volume-fill {
+			background: var(--accent);
+		}
+
+		.bar-btn.volume-btn {
+			flex-shrink: 0;
+		}
 
 		.bar-btn.volume-btn svg { width: 18px; height: 18px; }
 
@@ -899,6 +1035,179 @@
 		.context-item svg { width: 16px; height: 16px; fill: var(--muted); }
 		.context-item:hover svg { fill: var(--text); }
 		.context-divider { height: 1px; background: var(--border); margin: 6px 0; }
+
+		/* Modal Dialog */
+		.modal-overlay {
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			background: rgba(0, 0, 0, 0.7);
+			display: none;
+			align-items: center;
+			justify-content: center;
+			z-index: 2000;
+		}
+
+		.modal-overlay.show { display: flex; }
+
+		.modal {
+			background: var(--bg3);
+			border: 1px solid var(--border);
+			border-radius: 8px;
+			padding: 24px;
+			width: 100%;
+			max-width: 400px;
+			box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+		}
+
+		.modal-title {
+			font-size: 18px;
+			font-weight: 500;
+			margin-bottom: 16px;
+		}
+
+		.modal-input {
+			width: 100%;
+			padding: 12px;
+			background: var(--bg2);
+			border: 1px solid var(--border);
+			border-radius: 4px;
+			color: var(--text);
+			font-family: var(--sans);
+			font-size: 14px;
+			margin-bottom: 12px;
+		}
+
+		.modal-input:focus {
+			outline: none;
+			border-color: var(--accent);
+		}
+
+		.modal-textarea {
+			width: 100%;
+			padding: 12px;
+			background: var(--bg2);
+			border: 1px solid var(--border);
+			border-radius: 4px;
+			color: var(--text);
+			font-family: var(--sans);
+			font-size: 14px;
+			margin-bottom: 16px;
+			resize: vertical;
+			min-height: 80px;
+		}
+
+		.modal-textarea:focus {
+			outline: none;
+			border-color: var(--accent);
+		}
+
+		.modal-actions {
+			display: flex;
+			gap: 12px;
+			justify-content: flex-end;
+		}
+
+		.modal-btn {
+			padding: 10px 20px;
+			border: none;
+			border-radius: 4px;
+			font-family: var(--sans);
+			font-size: 13px;
+			font-weight: 500;
+			cursor: pointer;
+			transition: background 0.15s;
+		}
+
+		.modal-btn-primary {
+			background: var(--accent);
+			color: var(--bg);
+		}
+
+		.modal-btn-primary:hover {
+			background: var(--accent-hover);
+		}
+
+		.modal-btn-secondary {
+			background: var(--bg2);
+			color: var(--text);
+		}
+
+		.modal-btn-secondary:hover {
+			background: var(--border);
+		}
+
+		/* Playlist Modal */
+		.playlist-modal {
+			max-width: 500px;
+		}
+
+		.playlist-list {
+			max-height: 300px;
+			overflow-y: auto;
+			margin-bottom: 16px;
+		}
+
+		.playlist-item {
+			display: flex;
+			align-items: center;
+			gap: 12px;
+			padding: 12px;
+			border-radius: 6px;
+			cursor: pointer;
+			transition: background 0.15s;
+		}
+
+		.playlist-item:hover {
+			background: var(--bg2);
+		}
+
+		.playlist-item-thumbnail {
+			width: 48px;
+			height: 48px;
+			border-radius: 4px;
+			object-fit: cover;
+		}
+
+		.playlist-item-info {
+			flex: 1;
+		}
+
+		.playlist-item-title {
+			font-size: 14px;
+			font-weight: 500;
+			color: var(--text);
+		}
+
+		.playlist-item-count {
+			font-size: 12px;
+			color: var(--muted);
+		}
+
+		.playlist-create-btn {
+			width: 100%;
+			padding: 12px;
+			background: var(--bg2);
+			border: 1px dashed var(--border);
+			border-radius: 6px;
+			color: var(--muted);
+			font-family: var(--sans);
+			font-size: 13px;
+			cursor: pointer;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			gap: 8px;
+			transition: background 0.15s, border-color 0.15s;
+		}
+
+		.playlist-create-btn:hover {
+			background: var(--bg);
+			border-color: var(--accent);
+			color: var(--accent);
+		}
 
 		/* Equalizer animation */
 		.equalizer {
@@ -962,13 +1271,13 @@
 	</nav>
 
 	<div class="sidebar-label">
-		Recently Played
-		<button onclick="clearHistory()" title="Clear history">
+		Downloads
+		<button onclick="clearCompletedDownloads()" title="Clear completed">
 			<svg viewBox="0 0 24 24" width="12" height="12"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
 		</button>
 	</div>
 
-	<div class="history-scroll" id="sidebar-history"></div>
+	<div class="history-scroll" id="sidebar-downloads"></div>
 </aside>
 
 <!-- Main -->
@@ -1009,7 +1318,13 @@
 
 		<!-- Playlists -->
 		<div class="view" id="view-playlists">
-			<div class="section-label" style="margin-top:0;">Your Playlists</div>
+			<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+				<div class="section-label" style="margin-top:0;">Your Playlists</div>
+				<button class="song-btn" onclick="openCreatePlaylistModal()" style="padding:8px 16px;font-size:11px;">
+					<svg viewBox="0 0 24 24" style="width:14px;height:14px;vertical-align:middle;margin-right:6px;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+					New Playlist
+				</button>
+			</div>
 			<div class="card-grid" id="playlists-grid"></div>
 		</div>
 
@@ -1107,6 +1422,9 @@
 	</div>
 </div>
 
+<!-- Right Panel Overlay -->
+<div class="right-panel-overlay" id="right-panel-overlay" onclick="toggleRightPanel()"></div>
+
 <!-- Right Panel (Queue / Lyrics) -->
 <div class="right-panel" id="right-panel">
 	<div class="panel-tabs">
@@ -1183,15 +1501,26 @@
 	</div>
 	
 	<div class="bar-right">
-		<button class="bar-btn volume-btn" onclick="toggleMute()" id="volume-btn" title="Mute">
-			<svg viewBox="0 0 24 24" id="vol-high"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-			<svg viewBox="0 0 24 24" id="vol-low" style="display:none;"><path d="M7 9v6h4l5 5V4l-5 5H7z"/></svg>
-			<svg viewBox="0 0 24 24" id="vol-mute" style="display:none;"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+		<button class="bar-btn" id="download-song-btn" onclick="downloadCurrentSong()" title="Download">
+			<svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+		</button>
+		<button class="bar-btn" id="add-to-playlist-btn" onclick="openAddToPlaylist()" title="Add to Playlist">
+			<svg viewBox="0 0 24 24"><path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"/></svg>
+		</button>
+		<button class="bar-btn" id="like-btn" onclick="toggleLike()" title="Like">
+			<svg viewBox="0 0 24 24" class="like-icon"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
 		</button>
 		<div class="volume-control">
-			<div class="volume-slider" onclick="setVolume(event)">
-				<div class="volume-fill" id="volume-fill"></div>
+			<div class="volume-slider-wrap">
+				<div class="volume-slider" onclick="setVolume(event)">
+					<div class="volume-fill" id="volume-fill"></div>
+				</div>
 			</div>
+			<button class="bar-btn volume-btn" onclick="toggleMute()" id="volume-btn" title="Mute">
+				<svg viewBox="0 0 24 24" id="vol-high"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+				<svg viewBox="0 0 24 24" id="vol-low" style="display:none;"><path d="M7 9v6h4l5 5V4l-5 5H7z"/></svg>
+				<svg viewBox="0 0 24 24" id="vol-mute" style="display:none;"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+			</button>
 		</div>
 	</div>
 </div>
@@ -1221,6 +1550,34 @@
 	<div class="context-item" onclick="contextGoToArtist()">
 		<svg viewBox="0 0 24 24"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
 		Go to Artist
+	</div>
+</div>
+
+<!-- Create Playlist Modal -->
+<div class="modal-overlay" id="create-playlist-modal">
+	<div class="modal">
+		<div class="modal-title">Create New Playlist</div>
+		<input type="text" class="modal-input" id="new-playlist-title" placeholder="Playlist name" />
+		<textarea class="modal-textarea" id="new-playlist-desc" placeholder="Description (optional)"></textarea>
+		<div class="modal-actions">
+			<button class="modal-btn modal-btn-secondary" onclick="closeCreatePlaylistModal()">Cancel</button>
+			<button class="modal-btn modal-btn-primary" onclick="createNewPlaylist()">Create</button>
+		</div>
+	</div>
+</div>
+
+<!-- Add to Playlist Modal -->
+<div class="modal-overlay" id="add-to-playlist-modal">
+	<div class="modal playlist-modal">
+		<div class="modal-title">Add to Playlist</div>
+		<div class="playlist-list" id="add-to-playlist-list"></div>
+		<button class="playlist-create-btn" onclick="openCreatePlaylistFromAdd()">
+			<svg viewBox="0 0 24 24" width="18" height="18"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+			Create New Playlist
+		</button>
+		<div class="modal-actions" style="margin-top: 16px;">
+			<button class="modal-btn modal-btn-secondary" onclick="closeAddToPlaylistModal()">Cancel</button>
+		</div>
 	</div>
 </div>
 
@@ -1371,7 +1728,10 @@
 
 		// Fetch lyrics (best effort)
 		fetchLyrics(title, artist);
-		
+
+		// Update like button state
+		updateLikeButtonState(videoId);
+
 		// Reset pre-load state
 		nextTrackLoaded = false;
 		nextTrackPreloading = false;
@@ -1625,7 +1985,8 @@
 	// ─── Volume Control ────────────────────────────────────────────────────────
 
 	function setVolume(event) {
-		const rect = event.currentTarget.getBoundingClientRect();
+		const slider = event.currentTarget;
+		const rect = slider.getBoundingClientRect();
 		const pct = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
 		volume = pct;
 		audioPlayer.volume = volume;
@@ -1651,11 +2012,12 @@
 		const volHigh = document.getElementById('vol-high');
 		const volLow = document.getElementById('vol-low');
 		const volMute = document.getElementById('vol-mute');
-		
+		const slider = document.querySelector('.volume-slider');
+
 		if (!fill) return;
 
 		fill.style.width = (isMuted ? 0 : volume * 100) + '%';
-		
+
 		if (volHigh) volHigh.style.display = 'none';
 		if (volLow) volLow.style.display = 'none';
 		if (volMute) volMute.style.display = 'none';
@@ -1667,7 +2029,29 @@
 		} else {
 			if (volHigh) volHigh.style.display = 'block';
 		}
+
+		// Keep slider expanded when not muted
+		if (slider && volume > 0) {
+			slider.classList.add('active');
+		}
 	}
+
+	// Add hover behavior for volume slider (run immediately since script is at bottom of page)
+	(function() {
+		const volumeSlider = document.querySelector('.volume-slider');
+		if (volumeSlider) {
+			volumeSlider.addEventListener('mouseenter', function() {
+				this.classList.add('active');
+			});
+			volumeSlider.addEventListener('mouseleave', function() {
+				if (volume > 0) {
+					this.classList.add('active');
+				} else {
+					this.classList.remove('active');
+				}
+			});
+		}
+	})();
 
 	// ─── Shuffle & Repeat ──────────────────────────────────────────────────────
 
@@ -1806,6 +2190,7 @@
 
 	let downloadQueue = [];
 	let currentDownload = null;
+	let currentDownloadInfo = null;  // Store info about currently downloading track
 	let downloadProgress = {};
 
 	function downloadTrack(videoId, title, thumbnail, trackNumber, album, artist) {
@@ -1817,6 +2202,7 @@
 
 		downloadQueue.push({ videoId, title, thumbnail, trackNumber, album, artist });
 		showToast('Added to download queue: ' + title);
+		updateDownloads();
 
 		// Process queue
 		if (!currentDownload) {
@@ -1827,11 +2213,15 @@
 	function processDownloadQueue() {
 		if (downloadQueue.length === 0) {
 			currentDownload = null;
+			currentDownloadInfo = null;
+			updateDownloads();
 			return;
 		}
 
 		const item = downloadQueue.shift();
 		currentDownload = item.videoId;
+		currentDownloadInfo = item;
+		updateDownloads();
 
 		fetch('/download', {
 			method: 'POST',
@@ -1850,6 +2240,7 @@
 			if (d.error) {
 				showToast('Download failed: ' + d.error);
 				currentDownload = null;
+				currentDownloadInfo = null;
 				processDownloadQueue();
 				return;
 			}
@@ -1859,6 +2250,7 @@
 		.catch(e => {
 			showToast('Download error: ' + e.message);
 			currentDownload = null;
+			currentDownloadInfo = null;
 			processDownloadQueue();
 		});
 	}
@@ -1869,6 +2261,7 @@
 				.then(r => r.json())
 				.then(d => {
 					downloadProgress[key] = d;
+					updateDownloads();
 					if (d.status === 'done') {
 						clearInterval(poll);
 						showToast('Downloaded: ' + (d.title || title));
@@ -1889,23 +2282,119 @@
 		}, 1000);
 	}
 
+	// Update downloads sidebar
+	function updateDownloads() {
+		const sidebar = document.getElementById('sidebar-downloads');
+		if (!sidebar) return;
+
+		// Build list of all downloads (queued + current + completed)
+		const allDownloads = [];
+
+		// Add queued items
+		downloadQueue.forEach(item => {
+			allDownloads.push({
+				...item,
+				status: 'queued',
+				progress: 0,
+				key: null
+			});
+		});
+
+		// Add current download with progress
+		if (currentDownload && currentDownloadInfo) {
+			// Find progress data for current download
+			const progressKey = Object.keys(downloadProgress).find(k => 
+				downloadProgress[k].videoId === currentDownload || 
+				downloadProgress[k].title === currentDownloadInfo.title
+			);
+			
+			allDownloads.push({
+				...currentDownloadInfo,
+				status: 'downloading',
+				key: progressKey
+			});
+		}
+
+		// Add completed downloads from downloadProgress
+		Object.entries(downloadProgress).forEach(([key, data]) => {
+			if (data.status === 'done' || data.status === 'error') {
+				allDownloads.push({
+					...data,
+					status: data.status,
+					key: key
+				});
+			}
+		});
+
+		if (allDownloads.length === 0) {
+			sidebar.innerHTML = '<div class="empty" style="padding:24px;text-align:center;">No downloads</div>';
+			return;
+		}
+
+		sidebar.innerHTML = allDownloads.map(item => {
+			const progress = item.key ? downloadProgress[item.key] : {};
+			const percent = progress ? (progress.percent || 0) : 0;
+			const statusText = item.status === 'done' ? 'Complete' :
+			                   item.status === 'error' ? 'Failed' :
+			                   item.status === 'downloading' ? (percent + '%') : 'Queued';
+			const completeClass = item.status === 'done' ? 'complete' : '';
+
+			return `
+				<div class="download-item ${completeClass}">
+					<div class="download-item-info">
+						<div class="d-thumb">
+							${item.thumbnail ? `<img src="${item.thumbnail}" alt="">` : ''}
+						</div>
+						<div class="d-info">
+							<div class="d-title">${esc(item.title || 'Unknown')}</div>
+							<div class="d-artist">${esc(item.artist || 'Unknown Artist')}</div>
+							${item.status !== 'queued' ? `
+							<div class="download-progress">
+								<div class="download-progress-fill" style="width: ${percent}%"></div>
+							</div>
+							` : ''}
+							<div class="download-status">
+								<span>${statusText}</span>
+								${item.status === 'done' ? '<span>✓</span>' : ''}
+							</div>
+						</div>
+					</div>
+				</div>
+			`;
+		}).join('');
+	}
+
+	function clearCompletedDownloads() {
+		// Remove completed/error downloads from downloadProgress
+		Object.keys(downloadProgress).forEach(key => {
+			if (downloadProgress[key].status === 'done' || downloadProgress[key].status === 'error') {
+				delete downloadProgress[key];
+			}
+		});
+		updateDownloads();
+		showToast('Cleared completed downloads');
+	}
+
 	// ─── Right Panel (Queue/Lyrics) ────────────────────────────────────────────
 
 	function toggleRightPanel(panel) {
 		const rightPanel = document.getElementById('right-panel');
+		const overlay = document.getElementById('right-panel-overlay');
 		const isOpen = rightPanel.classList.contains('open');
-		
-		if (isOpen && activePanel === panel) {
+
+		if (isOpen && (!panel || activePanel === panel)) {
 			rightPanel.classList.remove('open');
+			overlay.classList.remove('open');
 		} else {
-			activePanel = panel;
-			switchPanel(panel);
+			activePanel = panel || 'queue';
+			switchPanel(activePanel);
 			rightPanel.classList.add('open');
+			overlay.classList.add('open');
 		}
 
 		// Update button states
-		document.getElementById('queue-toggle').classList.toggle('active', panel === 'queue' && rightPanel.classList.contains('open'));
-		document.getElementById('lyrics-toggle').classList.toggle('active', panel === 'lyrics' && rightPanel.classList.contains('open'));
+		document.getElementById('queue-toggle').classList.toggle('active', activePanel === 'queue' && rightPanel.classList.contains('open'));
+		document.getElementById('lyrics-toggle').classList.toggle('active', activePanel === 'lyrics' && rightPanel.classList.contains('open'));
 	}
 
 	function switchPanel(panel) {
@@ -2246,24 +2735,30 @@
 		setActiveNav("nav-playlists");
 		showView("view-playlists");
 		const el = document.getElementById("playlists-grid");
-		if (el.innerHTML) return;
 		el.innerHTML = loadingHTML();
-		fetch("/library/playlists")
+		fetch("/api/playlists")
 			.then(r => r.json())
 			.then(d => {
 				if (d.error) { el.innerHTML = '<div class="empty">— ' + d.error + ' —</div>'; return; }
 				const playlists = d.playlists || [];
-				if (!playlists.length) { el.innerHTML = '<div class="empty">— no playlists found —</div>'; return; }
+				if (!playlists.length) { el.innerHTML = '<div class="empty">— no playlists found —<br><br><button class="song-btn" onclick="openCreatePlaylistModal()">Create Your First Playlist</button></div>'; return; }
 				el.innerHTML = playlists.map(p => {
 					const img = p.thumbnail ? '<img src="' + p.thumbnail + '" alt="">' : '';
 					return '<div class="card" data-pid="' + p.playlistId + '">' +
 						'<div class="card-art">' + img + '</div>' +
 						'<div class="card-title">' + esc(p.title) + '</div>' +
 						'<div class="card-sub">' + (p.count ? p.count + ' songs' : 'Playlist') + '</div>' +
+						'<button class="card-delete-btn" onclick="event.stopPropagation();deletePlaylist(\'' + p.playlistId + '\',\'' + esc(p.title) + '\')" title="Delete playlist">' +
+						'<svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>' +
+						'</button>' +
 						'</div>';
 				}).join("");
 				el.querySelectorAll('.card[data-pid]').forEach(c => {
-					c.addEventListener('click', () => openPlaylist(c.dataset.pid));
+					c.addEventListener('click', (e) => {
+						if (!e.target.closest('.card-delete-btn')) {
+							openPlaylist(c.dataset.pid);
+						}
+					});
 				});
 			})
 			.catch(() => { el.innerHTML = '<div class="empty">— failed to load —</div>'; });
@@ -2571,6 +3066,233 @@
 				'<div class="card-sub">Artist</div></div>';
 		}
 		return '';
+	}
+
+	// ─── Playlist & Like Functions ─────────────────────────────────────────────
+
+	// Like button functions
+	function toggleLike() {
+		if (!currentTrack || !currentTrack.videoId) {
+			showToast('No song playing');
+			return;
+		}
+
+		const btn = document.getElementById('like-btn');
+		const isLiked = btn.classList.contains('liked');
+		const newRating = isLiked ? 'INDIFFERENT' : 'LIKE';
+
+		fetch('/api/song/rate', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				videoId: currentTrack.videoId,
+				rating: newRating
+			})
+		})
+		.then(r => r.json())
+		.then(data => {
+			if (data.success) {
+				if (newRating === 'LIKE') {
+					btn.classList.add('liked');
+					showToast('Added to Liked Songs');
+				} else {
+					btn.classList.remove('liked');
+					showToast('Removed from Liked Songs');
+				}
+			} else {
+				showToast('Error: ' + (data.error || 'Failed to update like status'));
+			}
+		})
+		.catch(err => {
+			console.error('Like error:', err);
+			showToast('Error updating like status');
+		});
+	}
+
+	function updateLikeButtonState(videoId) {
+		if (!videoId) return;
+
+		fetch(`/api/song/rating?videoId=${encodeURIComponent(videoId)}`)
+			.then(r => r.json())
+			.then(data => {
+				const btn = document.getElementById('like-btn');
+				if (data.likeStatus === 'LIKE') {
+					btn.classList.add('liked');
+				} else {
+					btn.classList.remove('liked');
+				}
+			})
+			.catch(err => console.error('Error getting like status:', err));
+	}
+
+	// Download current song
+	function downloadCurrentSong() {
+		if (!currentTrack || !currentTrack.videoId) {
+			showToast('No song playing');
+			return;
+		}
+
+		downloadTrack(
+			currentTrack.videoId,
+			currentTrack.title,
+			currentTrack.thumbnail,
+			currentTrack.trackNumber,
+			currentTrack.album,
+			currentTrack.artist
+		);
+	}
+
+	// Add to Playlist functions
+	let pendingAddVideoId = null;
+
+	function openAddToPlaylist() {
+		if (!currentTrack || !currentTrack.videoId) {
+			showToast('No song playing');
+			return;
+		}
+
+		pendingAddVideoId = currentTrack.videoId;
+		loadPlaylistsForModal();
+		document.getElementById('add-to-playlist-modal').classList.add('show');
+	}
+
+	function closeAddToPlaylistModal() {
+		document.getElementById('add-to-playlist-modal').classList.remove('show');
+		pendingAddVideoId = null;
+	}
+
+	function openCreatePlaylistFromAdd() {
+		closeAddToPlaylistModal();
+		document.getElementById('create-playlist-modal').classList.add('show');
+		document.getElementById('new-playlist-title').value = '';
+		document.getElementById('new-playlist-desc').value = '';
+	}
+
+	function loadPlaylistsForModal() {
+		const list = document.getElementById('add-to-playlist-list');
+		list.innerHTML = '<div class="loading"><div class="spinner"></div>Loading playlists...</div>';
+
+		fetch('/api/playlists')
+			.then(r => r.json())
+			.then(data => {
+				if (data.playlists && data.playlists.length > 0) {
+					list.innerHTML = data.playlists.map(p => `
+						<div class="playlist-item" onclick="addToPlaylist('${p.playlistId}')">
+							<img class="playlist-item-thumbnail" src="${p.thumbnail || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22%23333%22%3E%3Cpath d=%22M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-2-3.5l6-4.5-6-4.5v9z%22/%3E%3C/svg%3E'}" alt="">
+							<div class="playlist-item-info">
+								<div class="playlist-item-title">${esc(p.title)}</div>
+								<div class="playlist-item-count">${p.count || 0} songs</div>
+							</div>
+						</div>
+					`).join('');
+				} else {
+					list.innerHTML = '<div class="empty">No playlists yet. Create one to get started!</div>';
+				}
+			})
+			.catch(err => {
+				list.innerHTML = '<div class="empty">Error loading playlists</div>';
+				console.error(err);
+			});
+	}
+
+	function addToPlaylist(playlistId) {
+		if (!pendingAddVideoId) return;
+
+		fetch(`/api/playlist/${playlistId}/add`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				videoIds: [pendingAddVideoId]
+			})
+		})
+		.then(r => r.json())
+		.then(data => {
+			if (data.success) {
+				showToast('Added to playlist');
+				closeAddToPlaylistModal();
+			} else {
+				showToast('Error: ' + (data.error || 'Failed to add to playlist'));
+			}
+		})
+		.catch(err => {
+			showToast('Error adding to playlist');
+			console.error(err);
+		});
+	}
+
+	// Create Playlist functions
+	function openCreatePlaylistModal() {
+		document.getElementById('create-playlist-modal').classList.add('show');
+		document.getElementById('new-playlist-title').value = '';
+		document.getElementById('new-playlist-desc').value = '';
+	}
+
+	function closeCreatePlaylistModal() {
+		document.getElementById('create-playlist-modal').classList.remove('show');
+	}
+
+	function createNewPlaylist() {
+		const title = document.getElementById('new-playlist-title').value.trim();
+		const description = document.getElementById('new-playlist-desc').value.trim();
+
+		if (!title) {
+			showToast('Please enter a playlist name');
+			return;
+		}
+
+		fetch('/api/playlist/create', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				title: title,
+				description: description,
+				privacy: 'PRIVATE'
+			})
+		})
+		.then(r => r.json())
+		.then(data => {
+			if (data.success) {
+				showToast('Playlist created: ' + title);
+				closeCreatePlaylistModal();
+
+				// If we were adding a song, add it to the new playlist
+				if (pendingAddVideoId) {
+					addToPlaylist(data.playlistId);
+				}
+			} else {
+				showToast('Error: ' + (data.error || 'Failed to create playlist'));
+			}
+		})
+		.catch(err => {
+			showToast('Error creating playlist');
+			console.error(err);
+		});
+	}
+
+	// Delete playlist
+	function deletePlaylist(playlistId, title) {
+		if (!confirm(`Delete playlist "${title}"?\n\nThis cannot be undone.`)) {
+			return;
+		}
+
+		fetch(`/api/playlist/${playlistId}/delete`, {
+			method: 'POST'
+		})
+		.then(r => r.json())
+		.then(data => {
+			if (data.success) {
+				showToast('Playlist deleted');
+				// Refresh playlists view
+				document.getElementById('playlists-grid').innerHTML = '';
+				showPlaylists();
+			} else {
+				showToast('Error: ' + (data.error || 'Failed to delete playlist'));
+			}
+		})
+		.catch(err => {
+			showToast('Error deleting playlist');
+			console.error(err);
+		});
 	}
 </script>
 </body>
