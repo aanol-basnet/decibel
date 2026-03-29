@@ -258,7 +258,7 @@ _library_artists_cache = None
 def library_artists():
     global _library_artists_cache
     page   = int(request.args.get("page", 0))
-    size   = 50
+    size   = 80
     try:
         if _library_artists_cache is None:
             data = ytmusic.get_library_artists(limit=500)
