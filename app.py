@@ -3,28 +3,227 @@ import re
 import threading
 import subprocess
 import tempfile
+import json
+import secrets
 import requests as req
-from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context, session, redirect, url_for
 from flask_cors import CORS
 from ytmusicapi import YTMusic
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, TRCK, error as ID3Error
 from mutagen.mp3 import MP3
+from google_auth_oauthlib.flow import Flow
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
 
 app = Flask(__name__, static_folder="static")
-CORS(app)
+app.secret_key = secrets.token_hex(32)
+CORS(app, supports_credentials=True)
 
 DOWNLOAD_FOLDER = os.path.join(os.path.expanduser("~"), "Music", "Downloads")
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
-_auth = os.path.join(os.path.dirname(__file__), "browser.json")
-ytmusic = YTMusic(_auth) if os.path.exists(_auth) else YTMusic()
+# OAuth configuration
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CLIENT_CONFIG_FILE = os.path.join(BASE_DIR, "client_secret.json")
+TOKEN_FILE = os.path.join(BASE_DIR, "oauth_token.json")
+
+# OAuth scopes for YouTube Music
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/youtubepartner",
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+]
+
+# Initialize YTMusic (will be updated after OAuth login)
+ytmusic = YTMusic()
 progress_data = {}
+
+# In-memory session store (for production, use a proper session store)
+user_sessions = {}
 
 # Works on Windows, Linux, and macOS
 YTDLP = "yt-dlp"
 
 # Current playing track info (for streaming state)
 now_playing = {}
+
+
+# ─── OAuth 2.0 Authentication ─────────────────────────────────────────────────
+
+def get_oauth_flow():
+    """Create and return OAuth flow object."""
+    if not os.path.exists(CLIENT_CONFIG_FILE):
+        return None
+    with open(CLIENT_CONFIG_FILE, "r") as f:
+        client_config = json.load(f)
+    
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=SCOPES,
+        redirect_uri="http://localhost:5000/oauth/callback"
+    )
+    return flow
+
+
+def initialize_ytmusic_with_token():
+    """Initialize YTMusic with OAuth token if available."""
+    global ytmusic
+    if os.path.exists(TOKEN_FILE):
+        try:
+            with open(TOKEN_FILE, "r") as f:
+                token_info = json.load(f)
+            ytmusic = YTMusic(headers_auth=token_info)
+            print("✅ YTMusic initialized with OAuth token")
+            return True
+        except Exception as e:
+            print(f"⚠️  Failed to initialize YTMusic with token: {e}")
+    # Fall back to browser.json if exists
+    browser_file = os.path.join(BASE_DIR, "browser.json")
+    if os.path.exists(browser_file):
+        try:
+            ytmusic = YTMusic(browser_file)
+            print("✅ YTMusic initialized with browser.json")
+            return True
+        except Exception as e:
+            print(f"⚠️  Failed to initialize YTMusic with browser.json: {e}")
+    # Unauthenticated
+    ytmusic = YTMusic()
+    print("ℹ️  YTMusic running in unauthenticated mode")
+    return False
+
+
+def get_user_info():
+    """Get current user info from stored token."""
+    if os.path.exists(TOKEN_FILE):
+        try:
+            with open(TOKEN_FILE, "r") as f:
+                token_info = json.load(f)
+            # Try to get user info from token
+            if "email" in token_info:
+                return {
+                    "email": token_info.get("email", ""),
+                    "name": token_info.get("name", ""),
+                    "picture": token_info.get("picture", ""),
+                    "logged_in": True,
+                }
+        except Exception:
+            pass
+    return {"logged_in": False}
+
+
+@app.route("/oauth/login")
+def oauth_login():
+    """Start OAuth login flow."""
+    if not os.path.exists(CLIENT_CONFIG_FILE):
+        return jsonify({
+            "error": "OAuth not configured. Please create client_secret.json",
+            "setup_required": True,
+        }), 400
+    
+    try:
+        flow = get_oauth_flow()
+        if not flow:
+            return jsonify({"error": "Failed to create OAuth flow"}), 500
+        
+        authorization_url, state = flow.authorization_url(
+            access_type="offline",
+            include_granted_scopes="true",
+            prompt="consent",
+        )
+        
+        # Store state for verification
+        session["oauth_state"] = state
+        
+        return jsonify({
+            "authorization_url": authorization_url,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/oauth/callback")
+def oauth_callback():
+    """Handle OAuth callback from Google."""
+    try:
+        state = session.get("oauth_state")
+        if not state:
+            return redirect("/?error=invalid_state")
+        
+        flow = get_oauth_flow()
+        if not flow:
+            return redirect("/?error=oauth_not_configured")
+        
+        # Exchange authorization code for tokens
+        flow.fetch_token(authorization_response=request.url)
+        
+        # Get credentials
+        credentials = flow.credentials
+        
+        # Get user info
+        id_info = id_token.verify_oauth2_token(
+            credentials.id_token,
+            google_requests.Request(),
+            flow.client_config["client_id"]
+        )
+        
+        # Save token info
+        token_info = {
+            "token": credentials.token,
+            "refresh_token": credentials.refresh_token,
+            "token_uri": credentials.token_uri,
+            "client_id": credentials.client_id,
+            "client_secret": credentials.client_secret,
+            "scopes": credentials.scopes,
+            "email": id_info.get("email", ""),
+            "name": id_info.get("name", ""),
+            "picture": id_info.get("picture", ""),
+        }
+        
+        with open(TOKEN_FILE, "w") as f:
+            json.dump(token_info, f, indent=2)
+        
+        # Reinitialize YTMusic with new token
+        initialize_ytmusic_with_token()
+        
+        # Clear session state
+        session.pop("oauth_state", None)
+        
+        return redirect("/?login=success")
+    except Exception as e:
+        return redirect(f"/?login=error&message={str(e)}")
+
+
+@app.route("/oauth/logout", methods=["POST"])
+def oauth_logout():
+    """Logout and remove stored token."""
+    global ytmusic
+    try:
+        if os.path.exists(TOKEN_FILE):
+            os.remove(TOKEN_FILE)
+        
+        # Reset to unauthenticated YTMusic
+        browser_file = os.path.join(BASE_DIR, "browser.json")
+        if os.path.exists(browser_file):
+            ytmusic = YTMusic(browser_file)
+        else:
+            ytmusic = YTMusic()
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/oauth/status")
+def oauth_status():
+    """Get current OAuth login status."""
+    user_info = get_user_info()
+    return jsonify(user_info)
+
+
+# Initialize YTMusic on startup
+initialize_ytmusic_with_token()
 
 
 # ─── Home / Library ───────────────────────────────────────────────────────────

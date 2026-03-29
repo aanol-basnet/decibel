@@ -168,6 +168,24 @@
 		.queue-item-remove svg { width: 12px; height: 12px; fill: currentColor; }
 
 		/* ── Right Panel (Queue/Lyrics) ── */
+		.right-panel-overlay {
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 350px;
+			bottom: 80px;
+			background: rgba(0, 0, 0, 0.5);
+			opacity: 0;
+			pointer-events: none;
+			transition: opacity 0.3s ease;
+			z-index: 99;
+		}
+
+		.right-panel-overlay.open {
+			opacity: 1;
+			pointer-events: auto;
+		}
+
 		.right-panel {
 			width: 350px;
 			border-left: 1px solid var(--border);
@@ -1107,6 +1125,9 @@
 	</div>
 </div>
 
+<!-- Right Panel Overlay -->
+<div class="right-panel-overlay" id="right-panel-overlay" onclick="toggleRightPanel()"></div>
+
 <!-- Right Panel (Queue / Lyrics) -->
 <div class="right-panel" id="right-panel">
 	<div class="panel-tabs">
@@ -1893,19 +1914,22 @@
 
 	function toggleRightPanel(panel) {
 		const rightPanel = document.getElementById('right-panel');
+		const overlay = document.getElementById('right-panel-overlay');
 		const isOpen = rightPanel.classList.contains('open');
-		
-		if (isOpen && activePanel === panel) {
+
+		if (isOpen && (!panel || activePanel === panel)) {
 			rightPanel.classList.remove('open');
+			overlay.classList.remove('open');
 		} else {
-			activePanel = panel;
-			switchPanel(panel);
+			activePanel = panel || 'queue';
+			switchPanel(activePanel);
 			rightPanel.classList.add('open');
+			overlay.classList.add('open');
 		}
 
 		// Update button states
-		document.getElementById('queue-toggle').classList.toggle('active', panel === 'queue' && rightPanel.classList.contains('open'));
-		document.getElementById('lyrics-toggle').classList.toggle('active', panel === 'lyrics' && rightPanel.classList.contains('open'));
+		document.getElementById('queue-toggle').classList.toggle('active', activePanel === 'queue' && rightPanel.classList.contains('open'));
+		document.getElementById('lyrics-toggle').classList.toggle('active', activePanel === 'lyrics' && rightPanel.classList.contains('open'));
 	}
 
 	function switchPanel(panel) {

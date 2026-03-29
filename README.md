@@ -64,12 +64,12 @@ cd decibel
 
 **Ubuntu / Debian / macOS**
 ```bash
-pip install yt-dlp flask flask-cors ytmusicapi mutagen requests --break-system-packages
+pip install yt-dlp flask flask-cors ytmusicapi mutagen requests browser_cookie3 --break-system-packages
 ```
 
 **Windows** (run inside your virtual environment)
 ```bash
-pip install yt-dlp flask flask-cors ytmusicapi mutagen requests
+pip install yt-dlp flask flask-cors ytmusicapi mutagen requests browser_cookie3
 ```
 
 ---
@@ -104,19 +104,40 @@ Then open [http://localhost:5000](http://localhost:5000) in your browser.
 
 This unlocks personalized recommendations, your subscribed artists, and your playlists.
 
-1. Open Chrome or Brave and go to [music.youtube.com](https://music.youtube.com) while logged in
-2. Press `F12` to open DevTools → go to the **Network** tab
-3. Press `F5` to reload, then filter by `browse`
-4. Click any request, scroll to **Request Headers**, and copy all headers
-5. In your terminal, run:
+### Automatic Setup (Recommended)
+
+One command does everything — no manual copy-pasting required!
+
+1. Make sure you're logged into [music.youtube.com](https://music.youtube.com) in your browser
+2. Run the setup script:
+   ```bash
+   python setup_auth.py
+   ```
+3. Choose your browser (or press Enter for auto-detect)
+4. The script automatically extracts authentication and creates both files
+5. Add these to `.gitignore`:
+   ```bash
+   echo "browser.json" >> .gitignore
+   echo "cookies.txt" >> .gitignore
+   ```
+
+That's it! The script will:
+- ✅ Extract authentication cookies from your browser
+- ✅ Generate the required Authorization header automatically
+- ✅ Create `browser.json` for ytmusicapi
+- ✅ Create `cookies.txt` for yt-dlp
+- ✅ Verify everything works
+
+### Manual Setup (if automatic fails)
+
+If the automatic setup doesn't work:
+
+1. Create `browser.json` manually:
    ```bash
    ytmusicapi browser
    ```
-6. Paste the headers and press Enter twice — this creates a `browser.json` file
-7. Add `browser.json` to your `.gitignore` so it doesn't get pushed to GitHub:
-   ```bash
-   echo "browser.json" >> .gitignore
-   ```
+2. Follow the prompts to copy headers from browser DevTools
+3. Create `cookies.txt` using a browser extension like "Get cookies.txt LOCALLY"
 
 The app automatically uses `browser.json` if it exists. If not, it falls back to unauthenticated mode.
 
@@ -152,6 +173,7 @@ Files are saved to per-album folders inside:
 ```
 decibel/
 ├── app.py            # Flask backend
+├── setup_auth.py     # Automatic cookie extractor (run this first!)
 ├── README.md
 ├── browser.json      # YouTube Music auth (optional, not committed)
 ├── cookies.txt       # yt-dlp cookies (optional, not committed)
