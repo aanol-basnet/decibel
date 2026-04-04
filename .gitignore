@@ -1,2 +1,43 @@
+# Authentication files
 cookies.txt
 browser.json
+
+# Flask secret key
+.flask_secret_key
+
+# Audio files
+*.mp3
+*.wav
+*.flac
+*.m4a
+
+# Log files
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# OAuth token
+oauth_token.json
+
+# Client secrets (should not be committed)
+client_secret.json

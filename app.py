@@ -1,10 +1,14 @@
 import os
 import re
+import sys
+import time
+import shutil
 import threading
 import subprocess
 import tempfile
 import json
 import secrets
+import logging
 import requests as req
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context, session, redirect, url_for
 from flask_cors import CORS
@@ -15,8 +19,28 @@ from google_auth_oauthlib.flow import Flow
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 
+# ─── Logging Setup ────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__, static_folder="static")
-app.secret_key = secrets.token_hex(32)
+
+# Secret key persistence across restarts
+SECRET_KEY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".flask_secret_key")
+if os.path.exists(SECRET_KEY_FILE):
+    with open(SECRET_KEY_FILE, "r") as f:
+        app.secret_key = f.read().strip()
+else:
+    secret_key = secrets.token_hex(32)
+    with open(SECRET_KEY_FILE, "w") as f:
+        f.write(secret_key)
+    app.secret_key = secret_key
+
 CORS(app, supports_credentials=True)
 
 DOWNLOAD_FOLDER = os.path.join(os.path.expanduser("~"), "Music", "Downloads")
@@ -44,10 +68,41 @@ progress_data = {}
 user_sessions = {}
 
 # Works on Windows, Linux, and macOS
-YTDLP = "yt-dlp"
+# Try venv path first, then fall back to system PATH
+if os.name == "nt":  # Windows
+    _venv_ytdlp = os.path.join(BASE_DIR, "venv", "Scripts", "yt-dlp.exe")
+else:  # Linux/macOS
+    _venv_ytdlp = os.path.join(BASE_DIR, "venv", "bin", "yt-dlp")
+
+if os.path.exists(_venv_ytdlp):
+    YTDLP = _venv_ytdlp
+else:
+    YTDLP = "yt-dlp"
+
+# Validate yt-dlp is available
+if not shutil.which(YTDLP):
+    logger.error("❌ yt-dlp not found! Please install it:")
+    logger.error("   pip install yt-dlp")
+    logger.error("   Or run: python -m pip install yt-dlp")
+    sys.exit(1)
+
+logger.info(f"✅ yt-dlp found at: {YTDLP}")
+
+# Thread lock for progress data
+progress_lock = threading.Lock()
 
 # Current playing track info (for streaming state)
 now_playing = {}
+
+# ─── Input Validation ─────────────────────────────────────────────────────────
+
+def validate_id(param, pattern=r'^[a-zA-Z0-9_-]+$'):
+    """Validate ID parameters to prevent injection attacks."""
+    if not param or not isinstance(param, str):
+        return None
+    if not re.match(pattern, param):
+        return None
+    return param
 
 
 # ─── OAuth 2.0 Authentication ─────────────────────────────────────────────────
@@ -75,22 +130,22 @@ def initialize_ytmusic_with_token():
             with open(TOKEN_FILE, "r") as f:
                 token_info = json.load(f)
             ytmusic = YTMusic(headers_auth=token_info)
-            print("✅ YTMusic initialized with OAuth token")
+            logger.info("✅ YTMusic initialized with OAuth token")
             return True
         except Exception as e:
-            print(f"⚠️  Failed to initialize YTMusic with token: {e}")
+            logger.warning(f"⚠️  Failed to initialize YTMusic with token: {e}")
     # Fall back to browser.json if exists
     browser_file = os.path.join(BASE_DIR, "browser.json")
     if os.path.exists(browser_file):
         try:
             ytmusic = YTMusic(browser_file)
-            print("✅ YTMusic initialized with browser.json")
+            logger.info("✅ YTMusic initialized with browser.json")
             return True
         except Exception as e:
-            print(f"⚠️  Failed to initialize YTMusic with browser.json: {e}")
+            logger.warning(f"⚠️  Failed to initialize YTMusic with browser.json: {e}")
     # Unauthenticated
     ytmusic = YTMusic()
-    print("ℹ️  YTMusic running in unauthenticated mode")
+    logger.info("ℹ️  YTMusic running in unauthenticated mode")
     return False
 
 
@@ -235,6 +290,9 @@ def home():
         sections = []
         for section in data:
             title   = section.get("title", "")
+            # Skip "Shows For You" section
+            if "shows" in title.lower() and "for you" in title.lower():
+                continue
             results = section.get("contents", [])
             items   = []
             for r in results:
@@ -251,19 +309,25 @@ def home():
         return jsonify({"error": str(e)}), 500
 
 
-# Cache all library artists on first load
+# Cache all library artists on first load with TTL
 _library_artists_cache = None
+_library_artists_cache_time = 0
+LIBRARY_CACHE_TTL = 1800  # 30 minutes
 
 @app.route("/library/artists")
 def library_artists():
-    global _library_artists_cache
+    global _library_artists_cache, _library_artists_cache_time
     page   = int(request.args.get("page", 0))
     size   = 80
+    force_refresh = request.args.get("refresh", "").lower() == "true"
     try:
-        if _library_artists_cache is None:
+        # Check if cache is stale or refresh is requested
+        now = time.time()
+        if force_refresh or _library_artists_cache is None or (now - _library_artists_cache_time) > LIBRARY_CACHE_TTL:
             data = ytmusic.get_library_artists(limit=500)
-            print("Library artists fetched:", len(data))
+            logger.info(f"Library artists fetched: {len(data)}")
             _library_artists_cache = [format_artist(a) for a in data]
+            _library_artists_cache_time = now
         artists  = _library_artists_cache
         start    = page * size
         end      = start + size
@@ -296,6 +360,10 @@ def library_playlists():
 
 @app.route("/playlist/<playlist_id>")
 def playlist_page(playlist_id):
+    # Validate playlist_id
+    if not validate_id(playlist_id):
+        return jsonify({"error": "Invalid playlist ID format"}), 400
+    
     try:
         data   = ytmusic.get_playlist(playlist_id, limit=100)
         tracks = [format_song(t) for t in data.get("tracks", []) if t.get("videoId")]
@@ -332,6 +400,10 @@ def search():
 
 @app.route("/artist/<browse_id>")
 def artist_page(browse_id):
+    # Validate browse_id
+    if not validate_id(browse_id):
+        return jsonify({"error": "Invalid artist ID format"}), 400
+    
     try:
         data   = ytmusic.get_artist(browse_id)
         songs  = [format_song(s) for s in (data.get("songs", {}).get("results") or [])[:10]]
@@ -359,6 +431,10 @@ def artist_page(browse_id):
 
 @app.route("/album/<browse_id>")
 def album_page(browse_id):
+    # Validate browse_id
+    if not validate_id(browse_id):
+        return jsonify({"error": "Invalid album ID format"}), 400
+    
     try:
         data    = ytmusic.get_album(browse_id)
         artists = data.get("artists") or []
@@ -411,14 +487,30 @@ def download_thumbnail(url):
 
 
 def write_metadata(filepath, title=None, artist=None, album=None, track_number=None):
-    """Write ID3 metadata directly into MP3 using mutagen."""
+    """Write ID3 metadata directly into MP3 using mutagen.
+    Tries multiple approaches for maximum compatibility.
+    """
+    if not filepath or not os.path.exists(filepath):
+        logger.warning(f"⚠️  Metadata write skipped: file not found: {filepath}")
+        return
+
+    approaches_tried = 0
+
+    # Approach 1: Open existing ID3 tags or create new ones
     try:
         try:
             audio = ID3(filepath)
         except ID3Error:
-            mp3 = MP3(filepath)
-            mp3.add_tags()
-            audio = ID3(filepath)
+            # No ID3 tags — create them
+            try:
+                mp3 = MP3(filepath)
+                mp3.add_tags()
+                mp3.save()
+                audio = ID3(filepath)
+            except Exception as e:
+                logger.warning(f"⚠️  Metadata: Failed to create tags with MP3.add_tags: {e}")
+                return
+
         if title:
             audio["TIT2"] = TIT2(encoding=3, text=title)
         if artist:
@@ -428,29 +520,67 @@ def write_metadata(filepath, title=None, artist=None, album=None, track_number=N
         if track_number:
             audio["TRCK"] = TRCK(encoding=3, text=str(track_number))
         audio.save()
-    except Exception:
-        pass
+        approaches_tried += 1
+    except Exception as e:
+        logger.warning(f"⚠️  Metadata: Approach 1 failed: {e}")
+
+    # Approach 2: EasyID3 as fallback (simpler API, more forgiving)
+    if approaches_tried == 0:
+        try:
+            from mutagen.easyid3 import EasyID3
+            try:
+                audio = EasyID3(filepath)
+            except ID3Error:
+                mp3 = MP3(filepath)
+                mp3.add_tags()
+                mp3.save()
+                audio = EasyID3(filepath)
+
+            if title:
+                audio["title"] = title
+            if artist:
+                audio["artist"] = artist
+            if album:
+                audio["album"] = album
+            if track_number:
+                audio["tracknumber"] = str(track_number)
+            audio.save()
+            logger.info(f"✅ Metadata written via EasyID3 fallback: {os.path.basename(filepath)}")
+        except Exception as e:
+            logger.error(f"⚠️  Metadata: All approaches failed for {os.path.basename(filepath)}: {e}")
 
 
 def find_studio_version(title, artist):
-    """Search YouTube Music songs filter to get the studio version video ID."""
-    try:
-        query   = f"{artist} {title}" if artist else title
-        results = ytmusic.search(query, filter="songs", limit=5)
-        for r in results:
-            if r.get("videoId") and r.get("title", "").lower() == title.lower():
-                return r["videoId"]
-        if results and results[0].get("videoId"):
-            return results[0]["videoId"]
-    except Exception:
-        pass
-    return None
+    """Search YouTube Music songs filter to get the studio version video ID.
+    Runs with a timeout to avoid blocking downloads.
+    """
+    result = [None]
+
+    def _search():
+        try:
+            query = f"{artist} {title}" if artist else title
+            results = ytmusic.search(query, filter="songs", limit=5)
+            for r in results:
+                if r.get("videoId") and r.get("title", "").lower() == title.lower():
+                    result[0] = r["videoId"]
+                    return
+            if results and results[0].get("videoId"):
+                result[0] = results[0]["videoId"]
+        except Exception:
+            pass
+
+    search_thread = threading.Thread(target=_search, daemon=True)
+    search_thread.start()
+    search_thread.join(timeout=15)  # 15 second timeout
+
+    return result[0]
 
 
 # ─── Download ─────────────────────────────────────────────────────────────────
 
 def run_download(video_id, key, title, track_number, thumbnail_url, album, artist):
-    progress_data[key] = {"status": "starting", "percent": 3, "title": title}
+    with progress_lock:
+        progress_data[key] = {"status": "starting", "percent": 3, "title": title}
 
     # Swap to studio/audio version
     studio_id = find_studio_version(title, artist)
@@ -474,6 +604,11 @@ def run_download(video_id, key, title, track_number, thumbnail_url, album, artis
 
     out_path = os.path.join(out_folder, f"{clean_title}.%(ext)s")
 
+    # Build yt-dlp command with fallback approaches
+    # Try with cookies first, then without
+    cookies_path = os.path.join(BASE_DIR, "cookies.txt")
+    use_cookies = os.path.exists(cookies_path)
+
     cmd = [
         YTDLP,
         url,
@@ -485,12 +620,16 @@ def run_download(video_id, key, title, track_number, thumbnail_url, album, artis
         "--output", out_path,
         "--newline",
         "--no-warnings",
+        "--js-runtimes", "node",
     ]
 
-    # Embed album art — on Windows avoid the custom ffmpeg_i ppa as it can cause issues
-    # Just use yt-dlp's built-in embed which grabs YouTube's thumbnail
+    if use_cookies:
+        cmd.extend(["--cookies", cookies_path])
+
+    # Embed album art
     cmd += ["--embed-thumbnail"]
 
+    process = None
     try:
         with open(log_path, "w") as log:
             process = subprocess.Popen(
@@ -510,15 +649,30 @@ def run_download(video_id, key, title, track_number, thumbnail_url, album, artis
             if "[download]" in line and "%" in line:
                 try:
                     pct = int(float(line.split("%")[0].split()[-1]))
-                    progress_data[key]["percent"] = min(pct, 93)
-                    progress_data[key]["status"]  = "downloading"
+                    with progress_lock:
+                        progress_data[key]["percent"] = min(pct, 93)
+                        progress_data[key]["status"]  = "downloading"
                 except Exception:
                     pass
             elif "[ExtractAudio]" in line or "Converting" in line:
-                progress_data[key]["status"]  = "converting"
-                progress_data[key]["percent"] = 96
+                with progress_lock:
+                    progress_data[key]["status"]  = "converting"
+                    progress_data[key]["percent"] = 96
 
-        process.wait()
+        # Add timeout to process.wait()
+        try:
+            process.wait(timeout=300)  # 5 minute timeout
+        except subprocess.TimeoutExpired:
+            logger.error(f"⚠️  Download timed out: {title}")
+            process.kill()
+            with progress_lock:
+                progress_data[key] = {
+                    "status": "error",
+                    "percent": 0,
+                    "error": "Download timed out after 5 minutes",
+                    "_ts": time.time(),
+                }
+            return
 
         # Clean up temp thumbnail
         if thumb_file and os.path.exists(thumb_file):
@@ -538,18 +692,38 @@ def run_download(video_id, key, title, track_number, thumbnail_url, album, artis
                     album=album,
                     track_number=track_number,
                 )
-            progress_data[key] = {
-                "status":  "done",
-                "percent": 100,
-                "title":   clean_title,
-                "folder":  out_folder,
-            }
+            with progress_lock:
+                progress_data[key] = {
+                    "status":  "done",
+                    "percent": 100,
+                    "title":   clean_title,
+                    "folder":  out_folder,
+                    "_ts":     time.time(),
+                }
+            logger.info(f"✅ Download complete: {clean_title}")
         else:
-            progress_data[key] = {
-                "status":  "error",
-                "percent": 0,
-                "error":   "Download failed. Check download.log in your Music/Downloads folder.",
-            }
+            # Read error from log
+            error_detail = ""
+            if os.path.exists(log_path):
+                with open(log_path, "r") as f:
+                    log_content = f.read()
+                    if "429" in log_content or "Sign in" in log_content or "bot" in log_content.lower():
+                        error_detail = "YouTube rate limit or authentication error. Please wait a few minutes or re-run setup_auth.py."
+                    elif "Unable to download" in log_content:
+                        error_detail = "Cannot access YouTube. Check your internet connection."
+                    else:
+                        error_detail = "Check download.log in your Music/Downloads folder."
+            else:
+                error_detail = "Download failed. Check download.log in your Music/Downloads folder."
+
+            with progress_lock:
+                progress_data[key] = {
+                    "status":  "error",
+                    "percent": 0,
+                    "error":   error_detail,
+                    "_ts":     time.time(),
+                }
+            logger.error(f"❌ Download failed: {title} - {error_detail}")
 
     except Exception as e:
         if thumb_file and os.path.exists(thumb_file):
@@ -557,7 +731,12 @@ def run_download(video_id, key, title, track_number, thumbnail_url, album, artis
                 os.remove(thumb_file)
             except Exception:
                 pass
-        progress_data[key] = {"status": "error", "percent": 0, "error": str(e)}
+        error_msg = str(e)
+        if "429" in error_msg or "Sign in" in error_msg or "bot" in error_msg.lower():
+            error_msg = "YouTube rate limit or authentication error. Please wait a few minutes or re-run setup_auth.py."
+        with progress_lock:
+            progress_data[key] = {"status": "error", "percent": 0, "error": error_msg, "_ts": time.time()}
+        logger.error(f"❌ Download exception: {title} - {error_msg}")
 
 
 @app.route("/download", methods=["POST"])
@@ -573,8 +752,15 @@ def start_download():
     if not video_id:
         return jsonify({"error": "No videoId provided"}), 400
 
-    key = video_id
-    progress_data[key] = {"status": "starting", "percent": 0, "title": title}
+    # Validate video_id
+    if not validate_id(video_id):
+        return jsonify({"error": "Invalid videoId format"}), 400
+
+    # Use a unique key per download attempt to avoid race conditions
+    # when the same song is queued multiple times
+    key = f"{video_id}_{int(time.time() * 1000)}"
+    with progress_lock:
+        progress_data[key] = {"status": "starting", "percent": 0, "title": title, "_ts": time.time()}
 
     thread = threading.Thread(
         target=run_download,
@@ -589,7 +775,46 @@ def start_download():
 @app.route("/progress")
 def get_progress():
     key = request.args.get("key", "")
-    return jsonify(progress_data.get(key, {"status": "unknown", "percent": 0}))
+    # Clean up old completed/failed entries (older than 5 minutes)
+    _cleanup_progress_data()
+    with progress_lock:
+        return jsonify(progress_data.get(key, {"status": "unknown", "percent": 0}))
+
+
+PROGRESS_DATA_TTL = 300  # 5 minutes
+
+
+def _cleanup_progress_data():
+    """Remove completed/failed progress entries older than TTL."""
+    now = time.time()
+    stale_keys = []
+    with progress_lock:
+        for k, v in progress_data.items():
+            # Add timestamp if not present (for backward compat)
+            if "_ts" not in v:
+                v["_ts"] = now
+                continue
+            # Remove if done/error and older than TTL
+            if v.get("status") in ("done", "error", "unknown") and (now - v["_ts"]) > PROGRESS_DATA_TTL:
+                stale_keys.append(k)
+        for k in stale_keys:
+            del progress_data[k]
+
+
+def periodic_progress_cleanup():
+    """Background thread for periodic progress data cleanup."""
+    while True:
+        time.sleep(300)  # Every 5 minutes
+        try:
+            _cleanup_progress_data()
+            logger.debug("Progress data cleanup completed")
+        except Exception as e:
+            logger.warning(f"Progress data cleanup error: {e}")
+
+
+# Start periodic cleanup thread
+cleanup_thread = threading.Thread(target=periodic_progress_cleanup, daemon=True)
+cleanup_thread.start()
 
 
 @app.route("/folder")
@@ -601,56 +826,129 @@ def get_folder():
 
 def get_audio_stream_url(video_id):
     """Get the direct audio stream URL from yt-dlp."""
-    try:
-        cmd = [
-            YTDLP,
-            f"https://music.youtube.com/watch?v={video_id}",
-            "--format", "bestaudio/best",
-            "--get-url",
-            "--no-warnings",
-        ]
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except Exception as e:
-        print(f"Error getting stream URL: {e}")
+    # Try multiple approaches in order of preference
+    approaches = [
+        # Approach 1: Standard with cookies and Node.js runtime
+        ["--format", "bestaudio/best", "--get-url", "--no-warnings", 
+         "--js-runtimes", "node", "--cookies", os.path.join(BASE_DIR, "cookies.txt")],
+        # Approach 2: Without cookies but with iOS client (bypasses some rate limits)
+        ["--format", "bestaudio/best", "--get-url", "--no-warnings",
+         "--js-runtimes", "node", "--extractor-args", "youtube:player_client=ios"],
+        # Approach 3: TV client (sometimes works when others fail)
+        ["--format", "bestaudio/best", "--get-url", "--no-warnings",
+         "--extractor-args", "youtube:player_client=tv_embedded"],
+    ]
+    
+    last_error = None
+    for i, extra_args in enumerate(approaches):
+        try:
+            cmd = [YTDLP, f"https://music.youtube.com/watch?v={video_id}"] + extra_args
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                url = result.stdout.strip()
+                if url.startswith("http"):
+                    return url
+            
+            # Check if this was a rate limit error - if so, try next approach
+            stderr = result.stderr.lower() if result.stderr else ""
+            if "429" in stderr or "sign in" in stderr or "bot" in stderr:
+                last_error = "YouTube rate limit detected"
+                continue  # Try next approach
+            elif result.returncode != 0:
+                last_error = result.stderr[:200] if result.stderr else "Unknown error"
+                continue
+                
+        except subprocess.TimeoutExpired:
+            last_error = "Request timed out"
+            continue
+        except Exception as e:
+            last_error = str(e)
+            continue
+    
+    # All approaches failed
+    if last_error:
+        if "429" in last_error.lower() or "rate limit" in last_error.lower():
+            raise Exception("YouTube is rate-limiting requests from your IP. Please wait 30-60 minutes, try using mobile data as a hotspot, or restart your router.")
+        elif "sign in" in last_error.lower() or "bot" in last_error.lower():
+            raise Exception("YouTube authentication failed. Try re-running setup_auth.py to refresh your cookies.")
+        else:
+            raise Exception(f"Could not get stream URL: {last_error[:200]}")
+    
     return None
 
 
 @app.route("/stream/<video_id>")
 def stream_audio(video_id):
-    """Proxy audio stream from YouTube Music."""
+    """Proxy audio stream from YouTube Music with reconnection support."""
     global now_playing
-    
+
+    # Validate video_id
+    if not validate_id(video_id):
+        return jsonify({"error": "Invalid video ID format"}), 400
+
     stream_url = get_audio_stream_url(video_id)
     if not stream_url:
         return jsonify({"error": "Could not get stream URL"}), 500
-    
+
     # Store now playing info
     now_playing = {
         "videoId": video_id,
         "stream_url": stream_url,
     }
-    
-    # Stream the audio content
+
+    # Stream the audio content with reconnection logic
     try:
         def generate():
-            with req.get(stream_url, stream=True, timeout=30) as r:
-                r.raise_for_status()
-                for chunk in r.iter_content(chunk_size=8192):
-                    if chunk:
-                        yield chunk
-        
+            max_retries = 5
+            retry_count = 0
+            byte_offset = 0
+
+            while retry_count < max_retries:
+                try:
+                    headers = {}
+                    if byte_offset > 0:
+                        headers["Range"] = f"bytes={byte_offset}-"
+
+                    with req.get(
+                        stream_url,
+                        stream=True,
+                        timeout=120,
+                        headers=headers,
+                    ) as r:
+                        # If server honors range request, we got 206 Partial Content
+                        # If not, we restart from the beginning
+                        if r.status_code not in (200, 206):
+                            r.raise_for_status()
+
+                        for chunk in r.iter_content(chunk_size=8192):
+                            if chunk:
+                                byte_offset += len(chunk)
+                                yield chunk
+                                retry_count = 0  # Reset retry counter on successful data
+
+                        # If we exit the loop cleanly, the stream is complete
+                        break
+
+                except (req.exceptions.ConnectionError, req.exceptions.ReadTimeout):
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        print(f"Stream reconnect failed after {max_retries} retries for {video_id}")
+                        break
+                    print(f"Stream reconnect attempt {retry_count}/{max_retries} for {video_id}")
+                    time.sleep(1 * retry_count)  # Exponential backoff
+
         # Get content type from response
-        with req.head(stream_url, timeout=10) as r:
+        with req.head(stream_url, timeout=15) as r:
             content_type = r.headers.get("Content-Type", "audio/webm")
-        
+
         return Response(
             stream_with_context(generate()),
             mimetype=content_type,
@@ -898,7 +1196,7 @@ def format_song(s):
 def format_artist(a):
     return {
         "browseId":    a.get("browseId", ""),
-        "name":        a.get("artist", "") or a.get("name", ""),
+        "name":        a.get("artist", "") or a.get("name", "") or a.get("title", ""),
         "subscribers": a.get("subscribers", ""),
         "thumbnail":   get_thumb(a.get("thumbnails")),
     }
@@ -916,6 +1214,19 @@ def format_album(a):
 
 
 if __name__ == "__main__":
-    print(f"✅ DECIBEL running at http://0.0.0.0:5000")
-    print(f"📁 Saving to: {DOWNLOAD_FOLDER}")
+    logger.info(f"✅ DECIBEL running at http://0.0.0.0:5000")
+    logger.info(f"📁 Saving to: {DOWNLOAD_FOLDER}")
     app.run(host="0.0.0.0", debug=False, port=5000)
+
+
+# ─── Security Headers ─────────────────────────────────────────────────────────
+
+@app.after_request
+def add_security_headers(response):
+    """Add security headers to all responses."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    return response

@@ -1,0 +1,9 @@
+Flask>=3.0.0
+Flask-CORS>=4.0.0
+ytmusicapi>=1.7.0
+mutagen>=1.47.0
+requests>=2.31.0
+browser-cookie3>=0.19.1
+google-auth>=2.25.0
+google-auth-oauthlib>=1.2.0
+yt-dlp>=2024.10.0
