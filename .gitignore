@@ -1,11 +1,11 @@
-# Authentication files
+# Authentication files (user-specific, generated on first run)
 cookies.txt
 browser.json
 
-# Flask secret key
+# Flask secret key (auto-generated)
 .flask_secret_key
 
-# Audio files
+# Audio files (downloads)
 *.mp3
 *.wav
 *.flac
@@ -23,6 +23,7 @@ __pycache__/
 
 # Virtual environment
 venv/
+venv313/
 env/
 ENV/
 
@@ -36,18 +37,11 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# OAuth token
+# OAuth tokens (user-specific)
 oauth_token.json
 
-# Client secrets (should not be committed)
+# Client secrets (user must provide their own)
 client_secret.json
 
-# Build artifacts
-build/
-dist/
-*.egg-info/
-*.egg
-
-# PyInstaller
-decibel.spec
-*.spec
+# Windows debug files
+debug_headers.log

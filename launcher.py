@@ -30,8 +30,13 @@ def _safe_translation(domain, localedir=None, languages=None, *args, **kwargs):
         return gettext.NullTranslations()
 gettext.translation = _safe_translation
 
+# Force pywebview to use QT backend (doesn't require pythonnet)
+import os
+os.environ["PYWEBVIEW_GUI"] = "qt"
+
 import threading
 import logging
+import socket
 import webview
 
 # Import app module
@@ -70,12 +75,63 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def start_flask():
+def is_port_available(port, host='127.0.0.1'):
+    """Check if a port is available for use."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            result = s.connect_ex((host, port))
+            return result != 0
+    except Exception:
+        return False
+
+
+def find_available_port(start_port=5000, max_attempts=100):
+    """Find an available port starting from start_port."""
+    for port in range(start_port, start_port + max_attempts):
+        if is_port_available(port):
+            return port
+    return None
+
+
+def check_webview2():
+    """Check if WebView2 Runtime is installed."""
+    try:
+        import winreg
+        # Check for WebView2 Runtime
+        reg_paths = [
+            r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+            r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+        ]
+        for path in reg_paths:
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+                    winreg.QueryValueEx(key, "pv")
+                    return True
+            except FileNotFoundError:
+                continue
+        
+        # Also check if msedge.dll exists (WebView2 Runtime indicator)
+        import pathlib
+        edge_paths = [
+            pathlib.Path(os.environ.get('ProgramFiles(x86)', '')) / 'Microsoft' / 'EdgeWebView' / 'Application',
+            pathlib.Path(os.environ.get('ProgramFiles', '')) / 'Microsoft' / 'EdgeWebView' / 'Application',
+        ]
+        for edge_path in edge_paths:
+            if edge_path.exists():
+                return True
+        
+        return False
+    except Exception:
+        return False
+
+
+def start_flask(port=5000):
     """Start Flask server in background thread."""
     # Bind to localhost only (not public network)
     app.run(
         host="127.0.0.1",
-        port=5000,
+        port=port,
         debug=False,
         use_reloader=False  # Disable reloader for desktop app
     )
@@ -85,21 +141,37 @@ def main():
     """Main entry point for DECIBEL desktop app."""
     logger.info("🎵 Starting DECIBEL Desktop...")
 
+    # Check for WebView2 Runtime on Windows
+    if sys.platform == 'win32' and not check_webview2():
+        logger.warning("⚠️  WebView2 Runtime not detected")
+        logger.info("💡 Download from: https://developer.microsoft.com/en-us/microsoft-edge/webview2/")
+        logger.info("💡 The app will attempt to run, but may not work correctly")
+
+    # Find an available port
+    port = find_available_port(5000)
+    if port is None:
+        logger.error("❌ No available ports found. Cannot start Flask server.")
+        logger.info("💡 Try closing other applications that may be using ports 5000-5100")
+        sys.exit(1)
+
+    if port != 5000:
+        logger.info(f"⚠️  Port 5000 in use, using port {port} instead")
+
     # Start Flask in background thread
-    flask_thread = threading.Thread(target=start_flask, daemon=True)
+    flask_thread = threading.Thread(target=start_flask, args=(port,), daemon=True)
     flask_thread.start()
 
     # Wait for Flask to start
     import time
     time.sleep(1.5)
 
-    logger.info("✅ Flask server running on http://127.0.0.1:5000")
+    logger.info(f"✅ Flask server running on http://127.0.0.1:{port}")
     logger.info("🖥️  Opening desktop window...")
 
     # Create native desktop window
     window = webview.create_window(
         "DECIBEL - Music Streaming",
-        "http://127.0.0.1:5000",
+        f"http://127.0.0.1:{port}",
         width=1200,
         height=800,
         resizable=True,

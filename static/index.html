@@ -1703,7 +1703,7 @@
 			playQueue = [currentTrack];
 			originalQueue = [currentTrack];
 			currentQueueIndex = 0;
-			
+
 			// Auto-generate queue from related songs (like YT Music radio mode)
 			if (autoQueue) {
 				fetchAutoQueue(videoId);
@@ -1717,8 +1717,9 @@
 		updateLoadingState(true);
 		updateQueueUI();
 
-		// Load and play
-		audioPlayer.src = `/stream/${videoId}`;
+		// Load and play - ALWAYS pass metadata for studio version resolution (premium feature)
+		const streamUrl = `/stream/${videoId}?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}&album=${encodeURIComponent(album || '')}`;
+		audioPlayer.src = streamUrl;
 		audioPlayer.load();
 		audioPlayer.play().catch(e => {
 			showToast('Click play to start');
@@ -1770,12 +1771,13 @@
 		
 		nextTrackPreloading = true;
 		console.log('Pre-loading next track:', nextTrack.title);
-		
+
 		// Update queue UI to show pre-loading indicator
 		updateQueueUI();
-		
-		// Start loading the next track
-		audioPlayerNext.src = `/stream/${nextTrack.videoId}`;
+
+		// Start loading the next track with metadata for studio version resolution
+		const streamUrl = `/stream/${nextTrack.videoId}?title=${encodeURIComponent(nextTrack.title || '')}&artist=${encodeURIComponent(nextTrack.artist || '')}&album=${encodeURIComponent(nextTrack.album || '')}&force_studio=true`;
+		audioPlayerNext.src = streamUrl;
 		audioPlayerNext.load();
 	}
 
@@ -2893,7 +2895,7 @@
 						queue[0].album, queue[0].thumbnail, queue[0].trackNumber, queue, 0);
 					showToast(`Playing ${queue.length} tracks`);
 				};
-				
+
 				document.getElementById('dl-all-btn').onclick = () => {
 					const tracksToDownload = songs.filter(s => s.videoId);
 					tracksToDownload.forEach((t, i) => {

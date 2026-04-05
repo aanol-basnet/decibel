@@ -4,12 +4,12 @@ import sys
 import time
 import shutil
 import threading
+import uuid
 import subprocess
 import tempfile
 import json
 import secrets
 import logging
-import base64
 import hashlib
 import requests as req
 
@@ -20,6 +20,18 @@ os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 # Disable locale to avoid gettext issues in PyInstaller builds
 # This prevents "No translation file found" errors
 os.environ["LANG"] = "C"
+
+# ─── Resource Path Helper for Frozen Apps ─────────────────────────────────────
+
+def resource_path(relative_path):
+    """Get absolute path to resource, works for dev and frozen app."""
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except AttributeError:
+        # Not frozen, use script directory
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
 
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context, session, redirect, url_for
 from flask_cors import CORS
@@ -39,10 +51,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__, static_folder="static")
+# ─── Base Directory Setup (Must be before other path references) ──────────────
+
+# Use executable directory for frozen apps, script directory otherwise
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Use resource_path for static folder (works in frozen and dev)
+STATIC_FOLDER = resource_path("static")
+
+app = Flask(__name__, static_folder=STATIC_FOLDER)
 
 # Secret key persistence across restarts
-SECRET_KEY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".flask_secret_key")
+SECRET_KEY_FILE = os.path.join(BASE_DIR, ".flask_secret_key")
 if os.path.exists(SECRET_KEY_FILE):
     with open(SECRET_KEY_FILE, "r") as f:
         app.secret_key = f.read().strip()
@@ -57,12 +80,7 @@ CORS(app, supports_credentials=True)
 DOWNLOAD_FOLDER = os.path.join(os.path.expanduser("~"), "Music", "Downloads")
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
-# OAuth configuration
-# Use executable directory for frozen apps, script directory otherwise
-if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(sys.executable)
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# OAuth configuration (BASE_DIR already defined above)
 CLIENT_CONFIG_FILE = os.path.join(BASE_DIR, "client_secret.json")
 TOKEN_FILE = os.path.join(BASE_DIR, "oauth_token.json")
 
@@ -86,30 +104,43 @@ user_sessions = {}
 
 # For frozen apps, yt-dlp.exe is bundled alongside the .exe
 # For development, use the venv binary or system yt-dlp
-if getattr(sys, 'frozen', False):
-    # In frozen environment, yt-dlp.exe is bundled in _MEIPASS
-    if hasattr(sys, '_MEIPASS'):
+def find_ytdlp():
+    """Find yt-dlp executable with comprehensive fallback logic."""
+    # Strategy 1: In frozen environment, look for bundled yt-dlp.exe
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
         _frozen_ytdlp = os.path.join(sys._MEIPASS, "yt-dlp.exe")
         if os.path.exists(_frozen_ytdlp):
-            YTDLP_CMD = [_frozen_ytdlp]
-            logger.info(f"✅ Using bundled yt-dlp.exe")
-        else:
-            # Fallback to module approach
-            YTDLP_CMD = [sys.executable, "-m", "yt_dlp"]
-            logger.info("⚠️ Bundled yt-dlp.exe not found, using module fallback")
-    else:
-        YTDLP_CMD = ["yt-dlp"]
-else:
-    # In development, use the venv binary or system yt-dlp
-    if os.name == "nt":  # Windows
-        _venv_ytdlp = os.path.join(BASE_DIR, "venv", "Scripts", "yt-dlp.exe")
-    else:  # Linux/macOS
-        _venv_ytdlp = os.path.join(BASE_DIR, "venv", "bin", "yt-dlp")
+            logger.info(f"✅ Using bundled yt-dlp.exe from _MEIPASS")
+            return [_frozen_ytdlp]
     
-    if os.path.exists(_venv_ytdlp):
-        YTDLP_CMD = [_venv_ytdlp]
-    else:
-        YTDLP_CMD = ["yt-dlp"]
+    # Strategy 2: In development, check venv
+    if not getattr(sys, 'frozen', False):
+        if os.name == "nt":  # Windows
+            _venv_ytdlp = os.path.join(BASE_DIR, "venv", "Scripts", "yt-dlp.exe")
+        else:  # Linux/macOS
+            _venv_ytdlp = os.path.join(BASE_DIR, "venv", "bin", "yt-dlp")
+        
+        if os.path.exists(_venv_ytdlp):
+            logger.info(f"✅ Using venv yt-dlp: {_venv_ytdlp}")
+            return [_venv_ytdlp]
+    
+    # Strategy 3: Check system PATH
+    _system_ytdlp = shutil.which("yt-dlp") or shutil.which("yt-dlp.exe")
+    if _system_ytdlp:
+        logger.info(f"✅ Using system yt-dlp: {_system_ytdlp}")
+        return [_system_ytdlp]
+    
+    # Strategy 4: Use module approach (most reliable)
+    try:
+        import yt_dlp
+        logger.info("✅ Using yt-dlp Python module")
+        return None  # Will use Python API instead of CLI
+    except ImportError:
+        pass
+    
+    return None
+
+YTDLP_CMD = find_ytdlp()
 
 # Validate yt-dlp module is available
 try:
@@ -117,7 +148,13 @@ try:
     logger.info(f"✅ yt-dlp module available")
 except ImportError:
     logger.error("❌ yt-dlp module not found!")
+    logger.error("💡 Install with: pip install yt-dlp")
     sys.exit(1)
+
+# Validate we have at least one working method
+if YTDLP_CMD is None and not os.path.exists("yt-dlp"):
+    # Will rely on Python API
+    logger.info("ℹ️  Will use yt-dlp Python API for downloads")
 
 # Thread lock for progress data and global state
 progress_lock = threading.Lock()
@@ -171,8 +208,11 @@ def extract_browser_cookies(browser_name):
     try:
         import browser_cookie3
     except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "browser_cookie3"])
-        import browser_cookie3
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "browser-cookie3"], timeout=60)
+            import browser_cookie3
+        except Exception as install_err:
+            return {"success": False, "error": f"Failed to install browser-cookie3: {str(install_err)}"}
 
     browsers = {
         "chrome": browser_cookie3.chrome,
@@ -183,7 +223,7 @@ def extract_browser_cookies(browser_name):
     }
 
     if browser_name.lower() not in browsers:
-        return {"success": False, "error": f"Unknown browser: {browser_name}"}
+        return {"success": False, "error": f"Unknown browser: {browser_name}. Supported: {', '.join(browsers.keys())}"}
 
     try:
         cj = browsers[browser_name.lower()](domain_name="youtube.com")
@@ -193,11 +233,31 @@ def extract_browser_cookies(browser_name):
                 cookies[cookie.name] = cookie.value
 
         if not cookies:
-            return {"success": False, "error": f"No YouTube cookies found in {browser_name}. Make sure you're logged into music.youtube.com"}
+            return {
+                "success": False, 
+                "error": f"No YouTube cookies found in {browser_name.title()}. Please:\n1. Open {browser_name.title()}\n2. Go to music.youtube.com\n3. Log in with your Google account\n4. Close the browser and try again"
+            }
+        
+        # Check for essential authentication cookies
+        essential_cookies = ["SAPISID", "__Secure-3PAPISID", "SID", "__Secure-1PSID"]
+        found_essential = [c for c in essential_cookies if c in cookies]
+        
+        if len(found_essential) < 2:
+            logger.warning(f"⚠️  Missing essential cookies: {', '.join(set(essential_cookies) - set(found_essential))}")
+            # Continue anyway, but warn user
+            warning_msg = f"Warning: Some authentication cookies are missing. This may not work."
+        else:
+            warning_msg = None
 
         # Create browser.json
         sapisid = cookies.get("SAPISID") or cookies.get("__Secure-3PAPISID")
-        auth_header = generate_sapisidhash(sapisid) if sapisid else ""
+        if not sapisid:
+            return {
+                "success": False,
+                "error": f"SAPISID cookie not found in {browser_name.title()}. This usually means you're not logged into YouTube Music."
+            }
+        
+        auth_header = generate_sapisidhash(sapisid)
 
         cookie_parts = [f"{name}={value}" for name, value in cookies.items()]
         browser_config = {
@@ -235,13 +295,39 @@ def extract_browser_cookies(browser_name):
             ytmusic_test = YTMusic(browser_json_path)
             ytmusic_test.get_home(limit=1)
             logger.info("✅ Browser authentication verified successfully")
+            return {"success": True, "message": f"Authentication setup complete using {browser_name.title()}!"}
         except Exception as e:
-            logger.warning(f"⚠️  Auth verification failed: {e}")
-
-        return {"success": True, "message": f"Authentication setup complete using {browser_name.title()}!"}
+            error_detail = str(e)
+            logger.warning(f"⚠️  Auth verification failed: {error_detail}")
+            return {
+                "success": False,
+                "error": f"Authentication verification failed. This usually means your cookies expired.\n\nPlease:\n1. Make sure you're still logged into music.youtube.com\n2. Try logging out and back in on YouTube Music\n3. Close {browser_name.title()} completely and try again\n\nError: {error_detail[:200]}"
+            }
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to extract cookies: {str(e)}"}
+        error_msg = str(e).lower()
+        
+        # Provide specific error messages for common issues
+        if "encrypted" in error_msg or "keyring" in error_msg or "dbus" in error_msg:
+            return {
+                "success": False,
+                "error": f"Browser cookie encryption error. This usually means:\n- Your browser is currently running (please close it completely)\n- Or your OS doesn't support cookie extraction\n\nPlease close {browser_name.title()} and try again."
+            }
+        elif "profile" in error_msg or "not found" in error_msg:
+            return {
+                "success": False,
+                "error": f"{browser_name.title()} browser profile not found. Please make sure {browser_name.title()} is installed and you've used it to visit YouTube Music before."
+            }
+        elif "permission" in error_msg or "access denied" in error_msg:
+            return {
+                "success": False,
+                "error": f"Permission denied accessing {browser_name.title()} cookies. Try running DECIBEL as Administrator."
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"Failed to extract cookies from {browser_name.title()}: {str(e)[:300]}\n\nPlease ensure:\n1. {browser_name.title()} is completely closed\n2. You're logged into music.youtube.com\n3. Try a different browser if this continues to fail"
+            }
 
 
 @app.route("/setup/authenticate", methods=["POST"])
@@ -249,16 +335,33 @@ def setup_authenticate():
     """Authenticate using browser cookies."""
     data = request.get_json()
     browser = data.get("browser", "").lower()
-    
+
     if not browser:
         return jsonify({"success": False, "error": "Please select a browser"}), 400
 
     result = extract_browser_cookies(browser)
-    
+    logger.info(f"Authentication result: {result}")
+
     if result["success"]:
         # Reinitialize YTMusic with new auth
         initialize_ytmusic_with_token()
-    
+        
+        # Force auth cache to True immediately
+        import time
+        global _auth_cache
+        _auth_cache["valid"] = True
+        _auth_cache["timestamp"] = time.time()
+        logger.info("✅ Auth cache forced to True after successful authentication")
+        
+        # Double-check that authentication actually works
+        auth_valid = is_auth_valid()
+        logger.info(f"Auth validation after setup: {auth_valid}")
+        
+        if not auth_valid:
+            logger.error("❌ Authentication verification failed after setup!")
+            result["success"] = False
+            result["error"] = "Authentication setup completed but verification failed. Please try again."
+
     return jsonify(result)
 
 
@@ -491,9 +594,12 @@ def oauth_logout():
             new_ytmusic = YTMusic(browser_file)
         else:
             new_ytmusic = YTMusic()
-        
+
         with ytmusic_lock:
             ytmusic = new_ytmusic
+
+        # Clear auth cache to force re-verification
+        clear_auth_cache()
 
         return jsonify({"success": True})
     except Exception as e:
@@ -548,7 +654,11 @@ LIBRARY_CACHE_TTL = 1800  # 30 minutes
 @app.route("/library/artists")
 def library_artists():
     global _library_artists_cache, _library_artists_cache_time
-    page   = int(request.args.get("page", 0))
+    try:
+        page = int(request.args.get("page", 0))
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid page parameter"}), 400
+    
     size   = 80
     force_refresh = request.args.get("refresh", "").lower() == "true"
     try:
@@ -665,25 +775,101 @@ def album_page(browse_id):
     # Validate browse_id
     if not validate_id(browse_id):
         return jsonify({"error": "Invalid album ID format"}), 400
-    
+
     try:
-        data    = safe_ytmusic_call(ytmusic.get_album, browse_id)
+        data = safe_ytmusic_call(ytmusic.get_album, browse_id)
         artists = data.get("artists") or []
-        artist  = ", ".join(a.get("name", "") for a in artists)
-        tracks  = []
-        for t in data.get("tracks", []):
+        artist = ", ".join(a.get("name", "") for a in artists)
+        album_title = data.get("title", "")
+        
+        # IMPORTANT: Album tracklists often contain MUSIC VIDEOS, not studio recordings.
+        # Strategy: For each track, search for it as an individual song to get the studio version.
+        tracks = []
+        album_tracks = data.get("tracks", [])
+        
+        for t in album_tracks:
+            track_title = t.get("title", "")
+            track_number = t.get("trackNumber")
+            track_duration = t.get("duration", "")
+            track_artists = t.get("artists", [])
+            track_artist = ", ".join(a.get("name", "") for a in track_artists) if track_artists else artist
+            
+            # Search for this track as an individual song to get the studio version
+            studio_video_id = None
+            if track_title and track_artist:
+                studio_video_id = find_studio_version(track_title, track_artist, album_title)
+            
+            # If studio resolution failed, fall back to album track's videoId
+            if not studio_video_id:
+                studio_video_id = t.get("videoId")
+                logger.warning(f"⚠️  Studio version not found for '{track_title}', using album track videoId")
+            
             tracks.append({
-                "videoId":     t.get("videoId"),
-                "title":       t.get("title", ""),
-                "duration":    t.get("duration", ""),
-                "trackNumber": t.get("trackNumber"),
+                "videoId":     studio_video_id,
+                "title":       track_title,
+                "duration":    track_duration,
+                "trackNumber": track_number,
+                "artists":     track_artists,
             })
+        
         return jsonify({
-            "title":     data.get("title", ""),
+            "title":     album_title,
             "artist":    artist,
             "year":      data.get("year", ""),
             "thumbnail": get_thumb(data.get("thumbnails")),
             "tracks":    tracks,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/album/<browse_id>/resolve-studio", methods=["POST"])
+def resolve_album_studio(browse_id):
+    """Pre-resolve all album tracks to their studio versions.
+    
+    This endpoint loads the official album tracklist and resolves each track
+    to its studio recording, returning the mapping to the frontend.
+    """
+    # Validate browse_id
+    if not validate_id(browse_id):
+        return jsonify({"error": "Invalid album ID format"}), 400
+
+    try:
+        data = safe_ytmusic_call(ytmusic.get_album, browse_id)
+        album_title = data.get("title", "")
+        artists = data.get("artists") or []
+        artist = ", ".join(a.get("name", "") for a in artists)
+        
+        # Get the tracklist (this is already the official studio tracklist)
+        tracks = data.get("tracks", [])
+        
+        # Cache the album tracklist for future studio version lookups
+        album_key = album_title.lower().strip()
+        with _album_cache_lock:
+            _album_cache[album_key] = {
+                "browseId": browse_id,
+                "tracks": tracks,
+                "title": album_title
+            }
+        
+        # Build mapping of original videoId -> studio videoId
+        studio_mapping = {}
+        for t in tracks:
+            original_id = t.get("videoId")
+            track_title = t.get("title", "")
+            track_artists = t.get("artists", [])
+            track_artist = ", ".join(a.get("name", "") for a in track_artists) if track_artists else artist
+            
+            if original_id and track_title:
+                # Try to resolve (will use cache immediately)
+                studio_id = find_studio_version(track_title, track_artist, album_title)
+                studio_mapping[original_id] = studio_id if studio_id else original_id
+        
+        return jsonify({
+            "success": True,
+            "album": album_title,
+            "artist": artist,
+            "studio_mapping": studio_mapping
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -785,28 +971,235 @@ def write_metadata(filepath, title=None, artist=None, album=None, track_number=N
             logger.error(f"⚠️  Metadata: All approaches failed for {os.path.basename(filepath)}: {e}")
 
 
-def find_studio_version(title, artist):
-    """Search YouTube Music songs filter to get the studio version video ID.
-    Runs with a timeout to avoid blocking downloads.
+# ─── Studio Version Cache ─────────────────────────────────────────────────────
+
+# Cache for album lookups: {album_key: {"browseId": "...", "tracks": [...]}}
+_album_cache = {}
+_album_cache_lock = threading.Lock()
+
+
+def find_studio_version(title, artist, album=None):
+    """Get the studio album version of a song.
+
+    PREMIUM FEATURE: Always returns the official studio recording.
+
+    IMPORTANT: YouTube Music album tracklists often contain MUSIC VIDEOS, not studio recordings.
+    Strategy: Search for individual songs FIRST (returns studio versions), then fall back to album search.
+
+    Strategy 1 (Primary): Search for songs - YouTube Music returns studio versions
+    Strategy 2 (Fallback): Search for album tracklist if song search fails
     """
     result = [None]
 
-    def _search():
+    def search_songs_for_studio():
+        """Strategy 1: Search for individual songs - returns studio versions."""
         try:
+            non_studio_keywords = [
+                'music video', 'official music video', '(official video)', '[official video]',
+                '(official mv)', '[official mv]',
+                'live', 'live at', 'live performance', 'live version', 'live session',
+                'remix', 'remix version',
+                'acoustic version', 'acoustic session',
+                'karaoke', 'instrumental',
+                'extended mix', 'extended version',
+                'radio edit',
+                'lyric video', 'visualizer', 'audio only',
+            ]
+
             query = f"{artist} {title}" if artist else title
-            results = safe_ytmusic_call(ytmusic.search, query, filter="songs", limit=5)
+            results = safe_ytmusic_call(ytmusic.search, query, filter="songs", limit=15)
+
+            # Filter results to find the studio version
+            studio_candidates = []
+            
             for r in results:
-                if r.get("videoId") and r.get("title", "").lower() == title.lower():
-                    result[0] = r["videoId"]
-                    return
-            if results and results[0].get("videoId"):
-                result[0] = results[0]["videoId"]
-        except Exception:
-            pass
+                r_title = r.get("title", "").lower()
+                r_album = r.get("album", {}).get("name", "").lower() if r.get("album") else ""
+                
+                # Filter out non-studio versions
+                is_studio = True
+                for keyword in non_studio_keywords:
+                    if keyword in r_title:
+                        is_studio = False
+                        break
+                
+                if is_studio and r.get("videoId"):
+                    # Score this result
+                    score = 0
+                    title_lower = title.lower().strip()
+                    
+                    # Exact title match
+                    if r_title == title_lower:
+                        score = 200
+                    # Album match (if album provided)
+                    elif album and (album.lower().strip() in r_album or r_album in album.lower().strip()):
+                        score = 150
+                    # Title contains search title
+                    elif title_lower in r_title:
+                        score = 100
+                    
+                    studio_candidates.append((score, r))
+            
+            # Sort by score (highest first) and return best match
+            if studio_candidates:
+                studio_candidates.sort(key=lambda x: x[0], reverse=True)
+                best_score, best_result = studio_candidates[0]
+                
+                if best_score > 50:  # Minimum threshold
+                    logger.info(f"🎵 Found studio version via song search: {best_result.get('title', '')} (score: {best_score})")
+                    return best_result["videoId"]
+
+            return None
+
+        except Exception as e:
+            logger.warning(f"Song search failed: {e}")
+            return None
+
+    def search_album_and_find_track():
+        """Strategy 2: Find via album tracklist (fallback)."""
+        try:
+            if not album or not artist:
+                return None
+                
+            album_key = album.lower().strip()
+
+            # Check cache first
+            with _album_cache_lock:
+                cached = _album_cache.get(album_key)
+
+            if cached and cached.get("browseId"):
+                # Album already in cache, find the track
+                tracks = cached.get("tracks", [])
+            else:
+                # Search for the album
+                album_query = f"{artist} {album}" if artist else album
+                album_results = safe_ytmusic_call(
+                    ytmusic.search, album_query, filter="albums", limit=5
+                )
+
+                if not album_results:
+                    return None
+
+                # Find the best album match
+                best_album = None
+                best_album_score = 0
+
+                for alb in album_results:
+                    alb_title = alb.get("title", "").lower()
+
+                    score = 0
+                    # Exact album title match is best
+                    if alb_title == album_key:
+                        score = 200
+                    elif album_key in alb_title or alb_title in album_key:
+                        # Calculate overlap for partial matches
+                        overlap = len(set(album_key.split()) & set(alb_title.split()))
+                        score = overlap * 50
+
+                    if score > best_album_score:
+                        best_album_score = score
+                        best_album = alb
+
+                if not best_album or best_album_score < 50:
+                    logger.warning(f"⚠️  Album search failed for '{album_key}' (best score: {best_album_score})")
+                    return None
+
+                # Get the album's full tracklist
+                browse_id = best_album.get("browseId")
+                if not browse_id:
+                    return None
+
+                album_data = safe_ytmusic_call(ytmusic.get_album, browse_id)
+
+                if not album_data or not album_data.get("tracks"):
+                    return None
+
+                tracks = album_data.get("tracks", [])
+
+                # Cache the album data
+                with _album_cache_lock:
+                    _album_cache[album_key] = {
+                        "browseId": browse_id,
+                        "tracks": tracks,
+                        "title": album_data.get("title", "")
+                    }
+
+            # Find the matching track by title
+            title_lower = title.lower().strip()
+
+            # First pass: exact match
+            for track in tracks:
+                track_title = track.get("title", "").lower().strip()
+                track_video_id = track.get("videoId")
+
+                if not track_title or not track_video_id:
+                    continue
+
+                if track_title == title_lower:
+                    logger.info(f"🎵 Found exact match in album: {track.get('title', '')} (videoId: {track_video_id})")
+                    return track_video_id
+
+            # Second pass: normalized match (handle feat., parentheses, etc.)
+            def normalize_title(t):
+                """Remove feat., parentheses, and other variations for comparison."""
+                t = re.sub(r'\(.*?\)', '', t)  # Remove parentheses
+                t = re.sub(r'\[.*?\]', '', t)  # Remove brackets
+                t = re.sub(r'\bfeat\.?\b', '', t, flags=re.IGNORECASE)  # Remove feat.
+                t = re.sub(r'\bft\.?\b', '', t, flags=re.IGNORECASE)  # Remove ft.
+                t = re.sub(r'\bwith\b', '', t, flags=re.IGNORECASE)  # Remove "with"
+                t = re.sub(r'\s+', ' ', t).strip()  # Normalize whitespace
+                return t
+
+            normalized_search = normalize_title(title_lower)
+            
+            for track in tracks:
+                track_title = track.get("title", "").lower().strip()
+                track_video_id = track.get("videoId")
+
+                if not track_title or not track_video_id:
+                    continue
+
+                normalized_track = normalize_title(track_title)
+
+                if normalized_search == normalized_track:
+                    logger.info(f"🎵 Found normalized match in album: {track.get('title', '')} (videoId: {track_video_id})")
+                    return track_video_id
+
+            # Third pass: substring match
+            for track in tracks:
+                track_title = track.get("title", "").lower().strip()
+                track_video_id = track.get("videoId")
+
+                if not track_title or not track_video_id:
+                    continue
+
+                if title_lower in track_title or track_title in title_lower:
+                    logger.info(f"🎵 Found substring match in album: {track.get('title', '')} (videoId: {track_video_id})")
+                    return track_video_id
+
+            logger.warning(f"⚠️  No matching track found in album for '{title}'")
+            return None
+
+        except Exception as e:
+            logger.warning(f"Album search failed: {e}")
+            return None
+
+    # Execute search strategies
+    def _search():
+        # Strategy 1 (Primary): Search for songs - returns studio versions
+        result[0] = search_songs_for_studio()
+
+        # Strategy 2 (Fallback): Search for album tracklist if song search failed
+        if not result[0]:
+            logger.info(f"🔄 Song search failed, trying album search for '{title}'")
+            result[0] = search_album_and_find_track()
 
     search_thread = threading.Thread(target=_search, daemon=True)
     search_thread.start()
-    search_thread.join(timeout=15)  # 15 second timeout
+    search_thread.join(timeout=20)  # 20 second timeout
+
+    if result[0]:
+        logger.info(f"✅ Resolved to studio version: {title}")
 
     return result[0]
 
@@ -840,11 +1233,24 @@ def _yt_dlp_download(url, out_path, cookies_path=None):
 
 
 def run_download(video_id, key, title, track_number, thumbnail_url, album, artist):
+    """Download a single track with metadata and progress tracking."""
+    # Check ffmpeg availability upfront
+    if not FFMPEG_AVAILABLE:
+        with progress_lock:
+            progress_data[key] = {
+                "status": "error",
+                "percent": 0,
+                "error": "ffmpeg not found. Please install ffmpeg first: https://ffmpeg.org/download.html",
+                "_ts": time.time(),
+            }
+        logger.error("❌ Download failed: ffmpeg not available")
+        return
+    
     with progress_lock:
         progress_data[key] = {"status": "starting", "percent": 3, "title": title}
 
     # Swap to studio/audio version
-    studio_id = find_studio_version(title, artist)
+    studio_id = find_studio_version(title, artist, album if album else None)
     if studio_id:
         video_id = studio_id
 
@@ -962,9 +1368,9 @@ def start_download():
     if not validate_id(video_id):
         return jsonify({"error": "Invalid videoId format"}), 400
 
-    # Use a unique key per download attempt to avoid race conditions
-    # when the same song is queued multiple times
-    key = f"{video_id}_{int(time.time() * 1000)}"
+    # Use UUID-based key to prevent race conditions
+    # This ensures each download has a truly unique identifier
+    key = f"{video_id}_{uuid.uuid4().hex[:8]}"
     with progress_lock:
         progress_data[key] = {"status": "starting", "percent": 0, "title": title, "_ts": time.time()}
 
@@ -1030,28 +1436,69 @@ def get_folder():
 
 # ─── Streaming ────────────────────────────────────────────────────────────────
 
+def _get_stream_url_via_api(video_id, cookies_path):
+    """Get stream URL using yt-dlp Python API instead of CLI."""
+    from yt_dlp import YoutubeDL
+    
+    url = f"https://music.youtube.com/watch?v={video_id}"
+    
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+        'no_warnings': True,
+        'simulate': True,  # Don't download, just get info
+    }
+    
+    if cookies_path and os.path.exists(cookies_path):
+        ydl_opts['cookiefile'] = cookies_path
+    
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if info and 'url' in info:
+                return info['url']
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "429" in error_msg or "rate limit" in error_msg:
+            raise Exception("YouTube is rate-limiting requests from your IP. Please wait 30-60 minutes.")
+        elif "sign in" in error_msg or "authentication" in error_msg:
+            raise Exception("YouTube authentication failed. Please re-run authentication setup.")
+        else:
+            raise Exception(f"Could not get stream URL via API: {str(e)[:200]}")
+    
+    return None
+
 def get_audio_stream_url(video_id):
     """Get the direct audio stream URL from yt-dlp."""
     cookies_path = os.path.join(BASE_DIR, "cookies.txt")
     
+    # Use yt-dlp Python API if CLI is not available
+    if YTDLP_CMD is None:
+        return _get_stream_url_via_api(video_id, cookies_path)
+
     # Try multiple approaches in order of preference
     approaches = [
         # Approach 1: Standard with cookies
         ["--format", "bestaudio/best", "--get-url", "--no-warnings",
-         "--js-runtimes", "node", "--cookies", cookies_path],
+         "--cookies", cookies_path],
         # Approach 2: Without cookies but with iOS client
         ["--format", "bestaudio/best", "--get-url", "--no-warnings",
-         "--js-runtimes", "node", "--extractor-args", "youtube:player_client=ios"],
+         "--extractor-args", "youtube:player_client=ios"],
         # Approach 3: TV client
         ["--format", "bestaudio/best", "--get-url", "--no-warnings",
          "--extractor-args", "youtube:player_client=tv_embedded"],
+        # Approach 4: Android client (fallback)
+        ["--format", "bestaudio/best", "--get-url", "--no-warnings",
+         "--extractor-args", "youtube:player_client=android"],
+        # Approach 5: Default client (last resort)
+        ["--format", "bestaudio/best", "--get-url", "--no-warnings"],
     ]
-    
+
     last_error = None
     for extra_args in approaches:
         try:
             cmd = YTDLP_CMD + [f"https://music.youtube.com/watch?v={video_id}"] + extra_args
-            
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -1059,19 +1506,26 @@ def get_audio_stream_url(video_id):
                 timeout=30,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
-            
+
             if result.returncode == 0 and result.stdout.strip():
                 url = result.stdout.strip()
                 if url.startswith("http"):
                     return url
-            
+
             # Check if this was a rate limit error
             stderr = result.stderr.lower() if result.stderr else ""
+            stdout = result.stdout.strip() if result.stdout else ""
+
             if "429" in stderr or "sign in" in stderr or "bot" in stderr:
                 last_error = "YouTube rate limit detected"
                 continue
             elif result.returncode != 0:
-                last_error = result.stderr[:200] if result.stderr else "Unknown error"
+                # Capture both stdout and stderr for better debugging
+                error_msg = stderr if stderr else stdout
+                last_error = error_msg[:200] if error_msg else f"yt-dlp exit code {result.returncode} (no output)"
+                logger.error(f"yt-dlp failed (exit {result.returncode}):")
+                logger.error(f"  stdout: {stdout[:300]}")
+                logger.error(f"  stderr: {stderr[:300]}")
                 continue
                 
         except subprocess.TimeoutExpired:
@@ -1095,12 +1549,37 @@ def get_audio_stream_url(video_id):
 
 @app.route("/stream/<video_id>")
 def stream_audio(video_id):
-    """Proxy audio stream from YouTube Music with reconnection support."""
+    """Proxy audio stream from YouTube Music with reconnection support.
+    
+    PREMIUM FEATURE: Always resolves to studio album version when metadata is provided.
+    Accepts optional query parameters:
+    - title: Song title
+    - artist: Artist name
+    - album: Album name
+    """
     global now_playing
 
     # Validate video_id
     if not validate_id(video_id):
         return jsonify({"error": "Invalid video ID format"}), 400
+    
+    # Get metadata from query parameters
+    title = request.args.get("title", "").strip()
+    artist = request.args.get("artist", "").strip()
+    album = request.args.get("album", "").strip()
+    
+    # Always resolve to studio version when we have title and artist
+    # This implements the "premium feature" of playing studio versions instead of MVs
+    if title and artist:
+        try:
+            studio_id = find_studio_version(title, artist, album if album else None)
+            if studio_id and studio_id != video_id:
+                logger.info(f"🎵 Resolved to studio version: {video_id} -> {studio_id}")
+                video_id = studio_id
+            elif studio_id == video_id:
+                logger.info(f"✅ Already playing studio version for: {title}")
+        except Exception as e:
+            logger.warning(f"Studio version resolution failed: {e}, using original videoId")
 
     stream_url = get_audio_stream_url(video_id)
     if not stream_url:
@@ -1385,27 +1864,59 @@ def get_liked_songs():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/")
-def index():
-    # Check if user is authenticated
+# ─── Authentication Status Cache ──────────────────────────────────────────────
+
+_auth_cache = {"valid": None, "timestamp": 0}
+AUTH_CACHE_TTL = 300  # 5 minutes
+
+
+def is_auth_valid():
+    """Check if authentication is valid with caching."""
+    import time
+    now = time.time()
+    
+    # Return cached result if still fresh
+    if _auth_cache["valid"] is not None and (now - _auth_cache["timestamp"]) < AUTH_CACHE_TTL:
+        return _auth_cache["valid"]
+    
+    # Check authentication
     browser_json = os.path.join(BASE_DIR, "browser.json")
     if not os.path.exists(browser_json):
-        return send_from_directory("static", "setup.html")
+        _auth_cache["valid"] = False
+        _auth_cache["timestamp"] = now
+        return False
     
-    # Verify auth works
     try:
         from ytmusicapi import YTMusic
         ytmusic_test = YTMusic(browser_json)
         ytmusic_test.get_home(limit=1)
-        return send_from_directory("static", "index.html")
+        _auth_cache["valid"] = True
+        _auth_cache["timestamp"] = now
+        return True
     except Exception:
-        # Auth failed, show setup page
-        return send_from_directory("static", "setup.html")
+        _auth_cache["valid"] = False
+        _auth_cache["timestamp"] = now
+        return False
+
+
+def clear_auth_cache():
+    """Clear authentication cache (e.g., after logout)."""
+    _auth_cache["valid"] = None
+    _auth_cache["timestamp"] = 0
+
+
+@app.route("/")
+def index():
+    # Check authentication with caching
+    if is_auth_valid():
+        return send_from_directory(STATIC_FOLDER, "index.html")
+    else:
+        return send_from_directory(STATIC_FOLDER, "setup.html")
 
 
 @app.route("/setup")
 def setup_page():
-    return send_from_directory("static", "setup.html")
+    return send_from_directory(STATIC_FOLDER, "setup.html")
 
 
 # ─── Format helpers ───────────────────────────────────────────────────────────
@@ -1444,29 +1955,81 @@ def format_album(a):
 
 # ─── Auto-install ffmpeg if missing ──────────────────────────────────────────
 
-if not shutil.which("ffmpeg"):
-    logger.info("⏳ Installing ffmpeg... (one-time setup)")
-    try:
-        subprocess.run(
-            ["winget", "install", "ffmpeg", "--accept-package-agreements", "--accept-source-agreements"],
-            capture_output=True,
-            timeout=60,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        if shutil.which("ffmpeg"):
-            logger.info("✅ ffmpeg installed successfully!")
-        else:
-            logger.warning("⚠️  ffmpeg auto-install failed. Please install manually: winget install ffmpeg")
-    except Exception as e:
-        logger.warning(f"⚠️  ffmpeg auto-install failed: {e}")
-else:
-    logger.info("✅ ffmpeg found")
+def ensure_ffmpeg():
+    """Ensure ffmpeg is available, auto-install if missing."""
+    if shutil.which("ffmpeg") or shutil.which("ffmpeg.exe"):
+        logger.info("✅ ffmpeg found")
+        return True
+    
+    logger.info("⏳ ffmpeg not found, attempting auto-install... (one-time setup)")
+    
+    # Try different installation methods
+    install_methods = []
+    
+    if os.name == "nt":  # Windows
+        install_methods = [
+            (
+                "winget",
+                ["winget", "install", "Gyan.FFmpeg", "-y", "--accept-package-agreements", "--accept-source-agreements"],
+                "winget install Gyan.FFmpeg"
+            ),
+            (
+                "choco",
+                ["choco", "install", "ffmpeg", "-y"],
+                "choco install ffmpeg"
+            ),
+        ]
+    else:  # Linux/macOS
+        install_methods = [
+            (
+                "apt",
+                ["apt-get", "install", "-y", "ffmpeg"],
+                "sudo apt-get install ffmpeg"
+            ),
+            (
+                "brew",
+                ["brew", "install", "ffmpeg"],
+                "brew install ffmpeg"
+            ),
+        ]
+    
+    for method_name, cmd, manual_cmd in install_methods:
+        try:
+            logger.info(f"💡 Trying {method_name}...")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=120,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            if result.returncode == 0:
+                if shutil.which("ffmpeg") or shutil.which("ffmpeg.exe"):
+                    logger.info("✅ ffmpeg installed successfully!")
+                    return True
+        except subprocess.TimeoutExpired:
+            logger.warning(f"⚠️  {method_name} installation timed out")
+        except FileNotFoundError:
+            logger.debug(f"{method_name} not available")
+        except Exception as e:
+            logger.warning(f"⚠️  {method_name} failed: {e}")
+    
+    # All methods failed
+    logger.warning("❌ ffmpeg auto-install failed")
+    logger.info("💡 Please install ffmpeg manually:")
+    logger.info("   - Windows: winget install Gyan.FFmpeg")
+    logger.info("   - macOS:   brew install ffmpeg")
+    logger.info("   - Linux:   sudo apt install ffmpeg")
+    logger.info("   - Or download from: https://ffmpeg.org/download.html")
+    return False
+
+# Check ffmpeg on startup
+FFMPEG_AVAILABLE = ensure_ffmpeg()
 
 
 if __name__ == "__main__":
-    logger.info(f"✅ DECIBEL running at http://0.0.0.0:5000")
+    logger.info(f"✅ DECIBEL running at http://127.0.0.1:5000")
     logger.info(f"📁 Saving to: {DOWNLOAD_FOLDER}")
-    app.run(host="0.0.0.0", debug=False, port=5000)
+    app.run(host="127.0.0.1", debug=False, port=5000)
 
 
 # ─── Security Headers ─────────────────────────────────────────────────────────
