@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>DECIBEL - Setup</title>
+	<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+	<style>
+		*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+		:root {
+			--bg: #0e0e0e;
+			--bg2: #161616;
+			--bg3: #1e1e1e;
+			--border: #2a2a2a;
+			--border2: #383838;
+			--text: #f0ede8;
+			--muted: #666;
+			--dim: #333;
+			--accent: #1db954;
+			--accent-hover: #1ed760;
+			--error: #ff4444;
+			--mono: 'DM Mono', monospace;
+			--sans: 'DM Sans', sans-serif;
+			--display: 'Bebas Neue', sans-serif;
+		}
+
+		body {
+			background: var(--bg);
+			color: var(--text);
+			font-family: var(--sans);
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			min-height: 100vh;
+			padding: 20px;
+		}
+
+		.setup-container {
+			max-width: 500px;
+			width: 100%;
+			background: var(--bg2);
+			border: 1px solid var(--border);
+			border-radius: 8px;
+			padding: 40px;
+		}
+
+		.logo {
+			font-family: var(--display);
+			font-size: 48px;
+			letter-spacing: 4px;
+			text-align: center;
+			margin-bottom: 8px;
+		}
+
+		.logo span {
+			display: block;
+			font-family: var(--mono);
+			font-size: 10px;
+			letter-spacing: 2px;
+			color: var(--muted);
+			font-weight: 300;
+			margin-top: 4px;
+		}
+
+		.divider {
+			width: 40px;
+			height: 2px;
+			background: var(--accent);
+			margin: 24px auto;
+		}
+
+		h2 {
+			font-size: 20px;
+			font-weight: 500;
+			text-align: center;
+			margin-bottom: 16px;
+		}
+
+		.instructions {
+			background: var(--bg3);
+			border-left: 3px solid var(--accent);
+			padding: 16px;
+			border-radius: 4px;
+			margin-bottom: 24px;
+			font-size: 13px;
+			line-height: 1.6;
+		}
+
+		.instructions strong {
+			color: var(--accent);
+		}
+
+		.instructions ol {
+			margin-left: 20px;
+			margin-top: 8px;
+		}
+
+		.instructions li {
+			margin-bottom: 8px;
+			color: var(--muted);
+		}
+
+		label {
+			display: block;
+			font-size: 12px;
+			font-weight: 500;
+			color: var(--muted);
+			margin-bottom: 8px;
+			text-transform: uppercase;
+			letter-spacing: 1px;
+		}
+
+		select {
+			width: 100%;
+			padding: 12px 16px;
+			background: var(--bg);
+			border: 1px solid var(--border);
+			border-radius: 4px;
+			color: var(--text);
+			font-family: var(--sans);
+			font-size: 14px;
+			cursor: pointer;
+			outline: none;
+			transition: border-color 0.2s;
+			margin-bottom: 24px;
+		}
+
+		select:focus {
+			border-color: var(--accent);
+		}
+
+		select option {
+			background: var(--bg);
+			color: var(--text);
+		}
+
+		button {
+			width: 100%;
+			padding: 14px 24px;
+			background: var(--accent);
+			color: var(--bg);
+			border: none;
+			border-radius: 4px;
+			font-family: var(--sans);
+			font-size: 14px;
+			font-weight: 600;
+			cursor: pointer;
+			transition: background 0.15s, transform 0.1s;
+			text-transform: uppercase;
+			letter-spacing: 1px;
+		}
+
+		button:hover {
+			background: var(--accent-hover);
+			transform: translateY(-2px);
+		}
+
+		button:active {
+			transform: translateY(0);
+		}
+
+		button:disabled {
+			background: var(--dim);
+			cursor: not-allowed;
+			transform: none;
+		}
+
+		.status {
+			margin-top: 20px;
+			padding: 12px 16px;
+			border-radius: 4px;
+			font-size: 13px;
+			display: none;
+		}
+
+		.status.success {
+			background: rgba(29, 185, 84, 0.1);
+			border: 1px solid var(--accent);
+			color: var(--accent);
+			display: block;
+		}
+
+		.status.error {
+			background: rgba(255, 68, 68, 0.1);
+			border: 1px solid var(--error);
+			color: var(--error);
+			display: block;
+		}
+
+		.status.loading {
+			background: var(--bg3);
+			border: 1px solid var(--border);
+			color: var(--muted);
+			display: block;
+		}
+
+		.spinner {
+			display: inline-block;
+			width: 14px;
+			height: 14px;
+			border: 2px solid var(--border);
+			border-top-color: var(--accent);
+			border-radius: 50%;
+			animation: spin 0.8s linear infinite;
+			margin-right: 8px;
+			vertical-align: middle;
+		}
+
+		@keyframes spin {
+			to { transform: rotate(360deg); }
+		}
+	</style>
+</head>
+<body>
+	<div class="setup-container">
+		<div class="logo">
+			DECIBEL
+			<span>Music Streaming</span>
+		</div>
+		<div class="divider"></div>
+		<h2>Setup Authentication</h2>
+		
+		<div class="instructions">
+			<strong>Before we begin:</strong>
+			<ol>
+				<li>Open your browser and go to <strong>music.youtube.com</strong></li>
+				<li>Log in with your Google/YouTube account</li>
+				<li>Make sure you can play music</li>
+				<li>Then select your browser below and click <strong>Authenticate</strong></li>
+			</ol>
+		</div>
+
+		<label for="browser-select">Select Your Browser</label>
+		<select id="browser-select">
+			<option value="chrome">Google Chrome</option>
+			<option value="firefox">Mozilla Firefox</option>
+			<option value="edge">Microsoft Edge</option>
+			<option value="brave">Brave</option>
+			<option value="opera">Opera</option>
+		</select>
+
+		<button id="authenticate-btn" onclick="authenticate()">
+			Authenticate
+		</button>
+
+		<div id="status" class="status"></div>
+	</div>
+
+	<script>
+		function showStatus(message, type) {
+			const status = document.getElementById('status');
+			status.className = 'status ' + type;
+			
+			if (type === 'loading') {
+				status.innerHTML = '<span class="spinner"></span>' + message;
+			} else {
+				status.textContent = message;
+			}
+		}
+
+		function clearStatus() {
+			const status = document.getElementById('status');
+			status.className = 'status';
+			status.style.display = 'none';
+		}
+
+		function authenticate() {
+			const browser = document.getElementById('browser-select').value;
+			const btn = document.getElementById('authenticate-btn');
+			
+			btn.disabled = true;
+			showStatus('Extracting cookies from ' + browser + '...', 'loading');
+
+			fetch('/setup/authenticate', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ browser: browser })
+			})
+			.then(r => r.json())
+			.then(data => {
+				btn.disabled = false;
+				
+				if (data.success) {
+					showStatus('✅ ' + data.message + '\n\nLaunching DECIBEL...', 'success');
+					
+					// Redirect to main app after a brief delay
+					setTimeout(() => {
+						window.location.href = '/';
+					}, 2000);
+				} else {
+					showStatus('❌ ' + (data.error || 'Authentication failed'), 'error');
+				}
+			})
+			.catch(err => {
+				btn.disabled = false;
+				showStatus('❌ Failed to connect to backend. Please try again.', 'error');
+				console.error(err);
+			});
+		}
+
+		// Check if already authenticated on load
+		fetch('/setup/status')
+			.then(r => r.json())
+			.then(data => {
+				if (data.authenticated) {
+					// Already authenticated, redirect to main app
+					window.location.href = '/';
+				}
+			})
+			.catch(() => {});
+	</script>
+</body>
+</html>
