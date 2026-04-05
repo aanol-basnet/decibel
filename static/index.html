@@ -814,8 +814,9 @@
 		.bar-track { min-width: 0; width: 200px; }
 		.bar-title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 		.bar-title:hover { text-decoration: underline; }
-		.bar-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; cursor: pointer; }
-		.bar-sub:hover { color: var(--text); text-decoration: underline; }
+		.bar-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
+		#bar-artist-link { cursor: pointer; transition: color 0.15s; }
+		#bar-artist-link:hover { color: var(--text); text-decoration: underline; }
 
 		.bar-center {
 			flex: 1;
@@ -1467,7 +1468,7 @@
 	</div>
 	<div class="bar-track">
 		<div class="bar-title" id="bar-title">Nothing playing</div>
-		<div class="bar-sub" id="bar-sub">Search to get started</div>
+		<div class="bar-sub" id="bar-sub"><span id="bar-artist-link">Search to get started</span></div>
 	</div>
 	
 	<div class="bar-center">
@@ -1812,10 +1813,18 @@
 	function updateLoadingState(loading) {
 		const barSub = document.getElementById('bar-sub');
 		if (loading) {
-			barSub.textContent = 'Loading...';
+			barSub.innerHTML = '<span id="bar-artist-link">Loading...</span>';
 			barSub.style.color = 'var(--accent)';
 		} else if (currentTrack) {
-			barSub.textContent = currentTrack.artist || 'Unknown Artist';
+			if (currentTrack.artist) {
+				const artists = currentTrack.artist.split(',').map(a => a.trim()).filter(Boolean);
+				const artistLinks = artists.map(a => 
+					'<span id="bar-artist-link" onclick="searchArtistFromBar(\'' + esc(a) + '\')">' + esc(a) + '</span>'
+				).join(', ');
+				barSub.innerHTML = artistLinks;
+			} else {
+				barSub.innerHTML = '<span id="bar-artist-link">Unknown Artist</span>';
+			}
 			barSub.style.color = 'var(--muted)';
 		}
 	}
@@ -1962,13 +1971,20 @@
 		const barArt = document.getElementById('bar-art');
 
 		barTitle.style.opacity = '0.7';
-		barSub.style.opacity = '0.7';
 
 		setTimeout(() => {
 			barTitle.textContent = title;
-			barSub.textContent = artist || 'Unknown Artist';
+			if (artist) {
+				// Handle multiple artists (e.g., "Artist1, Artist2")
+				const artists = artist.split(',').map(a => a.trim()).filter(Boolean);
+				const artistLinks = artists.map(a => 
+					'<span id="bar-artist-link" onclick="searchArtistFromBar(\'' + esc(a) + '\')">' + esc(a) + '</span>'
+				).join(', ');
+				barSub.innerHTML = artistLinks;
+			} else {
+				barSub.innerHTML = '<span id="bar-artist-link">Unknown Artist</span>';
+			}
 			barTitle.style.opacity = '1';
-			barSub.style.opacity = '1';
 		}, 100);
 
 		document.getElementById('bar-fill').style.width = '0%';
@@ -2577,7 +2593,7 @@
 				const matchArtists = artists.filter(a => a.name.toLowerCase().includes(ql));
 				const matchAlbums  = albums.filter(a => a.title.toLowerCase().includes(ql));
 				const matchSongs   = songs.filter(s => s.title.toLowerCase().includes(ql));
-				
+
 				matchArtists.forEach(a => topResults.push({ type: "artist", item: a }));
 				matchAlbums.forEach(a  => topResults.push({ type: "album",  item: a }));
 				matchSongs.forEach(s   => topResults.push({ type: "song",   item: s }));
@@ -2596,6 +2612,26 @@
 				renderAlbumCards(albums, "search-albums");
 			})
 			.catch(() => showToast("Search failed"));
+	}
+
+	function searchArtistFromBar(artistName) {
+		// Search for the artist and open their page if found
+		fetch(`/search?q=${encodeURIComponent(artistName)}`)
+			.then(r => r.json())
+			.then(d => {
+				if (d.error) { showToast(d.error); return; }
+				const artists = d.artists || [];
+				// Find exact or closest match
+				const ql = artistName.toLowerCase();
+				const match = artists.find(a => a.name.toLowerCase() === ql) ||
+				              artists.find(a => a.name.toLowerCase().includes(ql));
+				if (match && match.browseId) {
+					openArtist(match.browseId);
+				} else {
+					showToast('Artist page not found');
+				}
+			})
+			.catch(() => showToast('Failed to search artist'));
 	}
 
 	function saveRecentArtist(artist) {
@@ -2739,16 +2775,16 @@
 		fetch("/api/playlists")
 			.then(r => r.json())
 			.then(d => {
-				if (d.error) { el.innerHTML = '<div class="empty">— ' + d.error + ' —</div>'; return; }
+				if (d.error) { el.innerHTML = '<div class="empty">— ' + esc(d.error) + ' —</div>'; return; }
 				const playlists = d.playlists || [];
 				if (!playlists.length) { el.innerHTML = '<div class="empty">— no playlists found —<br><br><button class="song-btn" onclick="openCreatePlaylistModal()">Create Your First Playlist</button></div>'; return; }
 				el.innerHTML = playlists.map(p => {
-					const img = p.thumbnail ? '<img src="' + p.thumbnail + '" alt="">' : '';
-					return '<div class="card" data-pid="' + p.playlistId + '">' +
+					const img = p.thumbnail ? '<img src="' + esc(p.thumbnail) + '" alt="">' : '';
+					return '<div class="card" data-pid="' + esc(p.playlistId) + '">' +
 						'<div class="card-art">' + img + '</div>' +
 						'<div class="card-title">' + esc(p.title) + '</div>' +
-						'<div class="card-sub">' + (p.count ? p.count + ' songs' : 'Playlist') + '</div>' +
-						'<button class="card-delete-btn" onclick="event.stopPropagation();deletePlaylist(\'' + p.playlistId + '\',\'' + esc(p.title) + '\')" title="Delete playlist">' +
+						'<div class="card-sub">' + (p.count ? esc(p.count) + ' songs' : 'Playlist') + '</div>' +
+						'<button class="card-delete-btn" onclick="event.stopPropagation();deletePlaylist(\'' + esc(p.playlistId) + '\',\'' + esc(p.title) + '\')" title="Delete playlist">' +
 						'<svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>' +
 						'</button>' +
 						'</div>';
@@ -2778,7 +2814,7 @@
 				if (d.error) { showToast(d.error); return; }
 				document.getElementById("playlist-title").textContent = d.title;
 				document.getElementById("playlist-sub").textContent = [d.author, d.count + " songs"].filter(Boolean).join(" · ");
-				if (d.thumbnail) document.getElementById("playlist-img").src = d.thumbnail;
+				if (d.thumbnail) document.getElementById("playlist-img").src = esc(d.thumbnail);
 				const tracks = d.tracks || [];
 				renderSongs(tracks, "playlist-tracks");
 				
@@ -2820,7 +2856,7 @@
 				if (d.error) { showToast(d.error); return; }
 				document.getElementById('artist-name').textContent = d.name;
 				document.getElementById('artist-sub').textContent = d.subscribers ? d.subscribers + ' subscribers' : 'Artist';
-				if (d.thumbnail) document.getElementById('artist-img').src = d.thumbnail;
+				if (d.thumbnail) document.getElementById('artist-img').src = esc(d.thumbnail);
 				renderSongs(d.songs || [], 'artist-songs');
 				renderAlbumCards(d.albums || [], 'artist-albums');
 			})
@@ -2842,7 +2878,7 @@
 				if (d.error) { showToast(d.error); return; }
 				document.getElementById('album-title').textContent = d.title;
 				document.getElementById('album-sub').textContent = [d.artist, d.year].filter(Boolean).join(' · ');
-				if (d.thumbnail) document.getElementById('album-img').src = d.thumbnail;
+				if (d.thumbnail) document.getElementById('album-img').src = esc(d.thumbnail);
 				currentAlbumTracks = d.tracks || [];
 				const songs = currentAlbumTracks.map(t => ({
 					videoId: t.videoId, title: t.title,
@@ -3062,7 +3098,7 @@
 		} else if (item.browseId) {
 			return '<div class="card" onclick="openArtist(\'' + item.browseId + '\')">' +
 				'<div class="card-art circle">' + img + '</div>' +
-				'<div class="card-title">' + esc(item.name || item.title || '') + '</div>' +
+				'<div class="card-title">' + esc(item.name || '') + '</div>' +
 				'<div class="card-sub">Artist</div></div>';
 		}
 		return '';
