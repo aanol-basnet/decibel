@@ -41,6 +41,7 @@ oauth_token.json
 
 # Client secrets (should not be committed)
 client_secret.json
+<<<<<<< HEAD
 
 # Build artifacts
 build/
@@ -51,3 +52,5 @@ dist/
 # PyInstaller
 decibel.spec
 *.spec
+=======
+>>>>>>> 96c0cd0453053979c560887d5ba05945684ed558

@@ -7,4 +7,7 @@ browser-cookie3>=0.19.1
 google-auth>=2.25.0
 google-auth-oauthlib>=1.2.0
 yt-dlp>=2024.10.0
+<<<<<<< HEAD
 pywebview>=4.4.0
+=======
+>>>>>>> 96c0cd0453053979c560887d5ba05945684ed558
