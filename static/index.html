@@ -1849,10 +1849,23 @@
 
 	function playNext() {
 		if (isShuffle) {
-			const randomIndex = Math.floor(Math.random() * playQueue.length);
-			playTrack(playQueue[randomIndex].videoId, playQueue[randomIndex].title,
-				playQueue[randomIndex].artist, playQueue[randomIndex].album,
-				playQueue[randomIndex].thumbnail, playQueue[randomIndex].trackNumber, playQueue, randomIndex);
+			// Only pick from tracks not yet played (after current index)
+			const remaining = playQueue.slice(currentQueueIndex + 1);
+			if (remaining.length === 0) {
+				if (repeatMode === 1) {
+					// All played — restart shuffled
+					playTrack(playQueue[0].videoId, playQueue[0].title, playQueue[0].artist,
+						playQueue[0].album, playQueue[0].thumbnail, playQueue[0].trackNumber, playQueue, 0);
+				}
+				return;
+			}
+			const pick = Math.floor(Math.random() * remaining.length);
+			const t = remaining[pick];
+			const idx = currentQueueIndex + 1 + pick;
+			// Move chosen track to next position so queue stays consistent
+			playQueue.splice(currentQueueIndex + 1 + pick, 1);
+			playQueue.splice(currentQueueIndex + 1, 0, t);
+			playTrack(t.videoId, t.title, t.artist, t.album, t.thumbnail, t.trackNumber, playQueue, currentQueueIndex + 1);
 			return;
 		}
 
@@ -1920,10 +1933,15 @@
 			currentQueueIndex = 0;
 		}
 		
-		// Update UI
+		// Update current track state
 		if (nextTrack) {
+			currentTrack = nextTrack;
+			currentlyPlayingVideoId = nextTrack.videoId;
+			updatePlayingHighlight(nextTrack.videoId);
 			updateBarForStreaming(nextTrack.title, nextTrack.artist, nextTrack.thumbnail);
 			addToHistory(nextTrack);
+			fetchLyrics(nextTrack.title, nextTrack.artist);
+			updateLikeButtonState(nextTrack.videoId);
 		}
 		
 		updateQueueUI();
@@ -2433,17 +2451,23 @@
 		titleEl.textContent = `${title} - ${artist || 'Unknown Artist'}`;
 		content.innerHTML = '<div class="loading"><div class="spinner"></div>Searching lyrics...</div>';
 
-		// Try to fetch from lyrics API (best effort - may not always work)
-		fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist||'')}/${encodeURIComponent(title)}`)
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), 5000);
+
+		fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist||'')}/${encodeURIComponent(title)}`, { signal: controller.signal })
 			.then(r => r.json())
 			.then(data => {
+				clearTimeout(timeout);
 				if (data && data.lyrics) {
 					content.innerHTML = `<div class="lyrics-text">${esc(data.lyrics)}</div>`;
 				} else {
 					showLyricsUnavailable();
 				}
 			})
-			.catch(() => showLyricsUnavailable());
+			.catch(() => {
+				clearTimeout(timeout);
+				showLyricsUnavailable();
+			});
 	}
 
 	function showLyricsUnavailable() {
@@ -2884,7 +2908,7 @@
 				currentAlbumTracks = d.tracks || [];
 				const songs = currentAlbumTracks.map(t => ({
 					videoId: t.videoId, title: t.title,
-					artist: d.artist, duration: t.duration, thumbnail: d.thumbnail,
+					artist: d.artist, duration: t.duration, thumbnail: t.thumbnail || d.thumbnail,
 					trackNumber: t.trackNumber, album: d.title,
 				}));
 				renderSongs(songs, 'album-tracks', true);

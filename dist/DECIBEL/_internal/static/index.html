@@ -1273,8 +1273,8 @@
 
 	<div class="sidebar-label">
 		Downloads
-		<button onclick="clearCompletedDownloads()" title="Clear completed">
-			<svg viewBox="0 0 24 24" width="12" height="12"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+		<button onclick="clearCompletedDownloads()" title="Clear completed downloads" style="padding: 4px 8px; min-width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;">
+			<svg viewBox="0 0 24 24" width="16" height="16"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
 		</button>
 	</div>
 
@@ -1385,6 +1385,8 @@
 			<div class="song-list" id="artist-songs"></div>
 			<div class="section-label">Albums</div>
 			<div class="card-grid" id="artist-albums"></div>
+			<div class="section-label">Singles & EPs</div>
+			<div class="card-grid" id="artist-singles"></div>
 		</div>
 
 		<!-- Album -->
@@ -2848,6 +2850,7 @@
 		showView('view-artist');
 		document.getElementById('artist-songs').innerHTML = loadingHTML();
 		document.getElementById('artist-albums').innerHTML = '';
+		document.getElementById('artist-singles').innerHTML = '';
 		document.getElementById('artist-name').textContent = '';
 		document.getElementById('artist-sub').textContent = '';
 		document.getElementById('artist-img').src = '';
@@ -2861,6 +2864,7 @@
 				if (d.thumbnail) document.getElementById('artist-img').src = esc(d.thumbnail);
 				renderSongs(d.songs || [], 'artist-songs');
 				renderAlbumCards(d.albums || [], 'artist-albums');
+				renderAlbumCards(d.singles || [], 'artist-singles');
 			})
 			.catch(() => showToast('Failed to load artist'));
 	}
@@ -2927,22 +2931,26 @@
 
 	// ─── Rendering ─────────────────────────────────────────────────────────────
 
-	function renderSongs(songs, cid, numbered = false) {
+	function renderSongs(songs, cid, numbered = false, queueContext = null) {
 		const el = document.getElementById(cid);
 		if (!songs.length) { el.innerHTML = '<div class="empty">— no results —</div>'; return; }
-		
+
 		const playingVideoId = currentlyPlayingVideoId;
+
+		// If a queue context is provided, use it for click handlers (e.g. album tracks)
+		// Otherwise fall back to getCurrentQueue() (the currently active queue)
+		const effectiveQueue = queueContext || getCurrentQueue();
 
 		el.innerHTML = songs.map((s, i) => {
 			const isPlaying = s.videoId === playingVideoId;
 			const img = s.thumbnail ? `<img src="${s.thumbnail}" alt="">` : '';
-			const playIcon = isPlaying ? 
+			const playIcon = isPlaying ?
 				`<div class="equalizer"><span></span><span></span><span></span></div>` :
 				`<svg class="play-svg" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
-			
+
 			return `
-			<div class="song-row ${isPlaying ? 'now-playing' : ''}" id="row-${s.videoId}" 
-				onclick="playTrack('${s.videoId}', '${esc(s.title)}', '${esc(s.artist||"")}', '${esc(s.album||"")}', '${esc(s.thumbnail||"")}', ${s.trackNumber||"null"}, getCurrentQueue())"
+			<div class="song-row ${isPlaying ? 'now-playing' : ''}" id="row-${s.videoId}"
+				onclick="playTrackFromContext('${s.videoId}', '${esc(s.title)}', '${esc(s.artist||"")}', '${esc(s.album||"")}', '${esc(s.thumbnail||"")}', ${s.trackNumber||"null"}, '${cid}', ${i})"
 				oncontextmenu="showContextMenu(event, {videoId:'${s.videoId}',title:'${esc(s.title)}',artist:'${esc(s.artist||"")}',album:'${esc(s.album||"")}',thumbnail:'${esc(s.thumbnail||"")}',trackNumber:${s.trackNumber||"null"}})">
 				${numbered ? `<span class="song-idx">${i + 1}</span>` : `<div class="song-art">${img}</div>`}
 				<div class="song-info">
@@ -2951,7 +2959,7 @@
 				</div>
 				<span class="song-dur">${s.duration || ''}</span>
 				<div class="song-actions">
-					<button class="song-btn play-btn" onclick="event.stopPropagation(); playTrack('${s.videoId}', '${esc(s.title)}', '${esc(s.artist||"")}', '${esc(s.album||"")}', '${esc(s.thumbnail||"")}', ${s.trackNumber||"null"}, getCurrentQueue())">
+					<button class="song-btn play-btn" onclick="event.stopPropagation(); playTrackFromContext('${s.videoId}', '${esc(s.title)}', '${esc(s.artist||"")}', '${esc(s.album||"")}', '${esc(s.thumbnail||"")}', ${s.trackNumber||"null"}, '${cid}', ${i})">
 						${playIcon}
 						${isPlaying ? 'Playing' : 'Play'}
 					</button>
@@ -2963,6 +2971,39 @@
 			</div>
 		`;
 		}).join('');
+	}
+
+	function playTrackFromContext(videoId, title, artist, album, thumbnail, trackNumber, contextId, songIndex) {
+		// Determine the correct queue to use based on context
+		let queue = [];
+		let startIndex = 0;
+
+		// Check if this is an album view - use the album track list as the queue
+		if (contextId === 'album-tracks' && currentAlbumTracks.length > 0) {
+			// Build the album queue from the album data (with proper album info)
+			const albumTitle = document.getElementById('album-title').textContent;
+			const albumArtist = document.getElementById('album-sub').textContent.split(' · ')[0] || '';
+			const albumThumbnail = document.getElementById('album-img').src;
+
+			queue = currentAlbumTracks.map(t => ({
+				videoId: t.videoId,
+				title: t.title,
+				artist: albumArtist,
+				album: albumTitle,
+				thumbnail: albumThumbnail,
+				trackNumber: t.trackNumber,
+				duration: t.duration,
+			}));
+			startIndex = songIndex;
+		} else {
+			// Fall back to the current play queue
+			queue = getCurrentQueue();
+			// Find the index of this song in the current queue
+			startIndex = queue.findIndex(t => t.videoId === videoId);
+			if (startIndex < 0) startIndex = songIndex;
+		}
+
+		playTrack(videoId, title, artist, album, thumbnail, trackNumber, queue, startIndex);
 	}
 
 	function getCurrentQueue() {

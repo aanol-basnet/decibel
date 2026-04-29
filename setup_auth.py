@@ -15,7 +15,6 @@ import json
 import http.cookiejar
 import subprocess
 import hashlib
-import hmac
 import time
 
 # Try to import browser_cookie3
@@ -167,7 +166,7 @@ def save_cookies_txt(cookies, filepath):
                 value=value,
                 port=None,
                 port_specified=False,
-                domain=".music.youtube.com",
+                domain=".youtube.com",
                 domain_specified=True,
                 domain_initial_dot=True,
                 path="/",

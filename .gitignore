@@ -45,3 +45,7 @@ client_secret.json
 
 # Windows debug files
 debug_headers.log
+
+# Build artifacts
+build/
+dist/

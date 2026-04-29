@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "WebFetch(github.com)"
-    ]
-  },
-  "$version": 3
-}
